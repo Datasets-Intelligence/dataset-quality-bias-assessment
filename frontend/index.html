@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Quality and Bias Assessment</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- HEADER SECTION -->
+    <header class="header">
+        <div class="header-content">
+            <h1 class="project-title">Dataset Quality and Bias Assessment</h1>
+            <p class="project-subtitle">A Machine Learning Dataset Evaluation Tool</p>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-container">
+        
+        <!-- ANALYSIS CONFIGURATION SECTION -->
+        <section class="config-section">
+            <div class="section-header">
+                <h2>Analysis Configuration</h2>
+            </div>
+            
+            <div class="config-content">
+                
+                <!-- Upload Dataset Block -->
+                <div class="upload-block">
+                    <label for="file-input" class="upload-label">Upload Dataset (CSV only)</label>
+                    <div class="file-input-wrapper">
+                        <input 
+                            type="file" 
+                            id="file-input" 
+                            accept=".csv" 
+                            class="file-input"
+                        >
+                        <button id="file-button" class="file-button">Choose File</button>
+                        <span id="file-name" class="file-name">No file selected</span>
+                    </div>
+                    <div id="upload-status" class="upload-status hidden"></div>
+                </div>
+
+                <!-- Target Variable Input -->
+                <div class="target-block">
+                    <label for="target-input" class="target-label">Target Variable</label>
+                    <input 
+                        type="text" 
+                        id="target-input" 
+                        class="target-input" 
+                        placeholder="Enter the target column name"
+                        disabled
+                    >
+                    <small class="helper-text">The column to predict or analyze</small>
+                </div>
+
+                <!-- Run Analysis Button -->
+                <div class="button-block">
+                    <button id="run-button" class="run-button" disabled>Run Analysis</button>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ERROR MESSAGE BLOCK (Initially Hidden) -->
+        <div id="error-container" class="error-container hidden">
+            <div class="error-box">
+                <div class="error-header">
+                    <span class="error-icon">⚠</span>
+                    <span class="error-title">Error</span>
+                    <button id="error-close" class="error-close">&times;</button>
+                </div>
+                <div id="error-message" class="error-message"></div>
+            </div>
+        </div>
+
+        <!-- RESULTS SECTION (Initially Hidden) -->
+        <section id="results-section" class="results-section hidden">
+            <div class="section-header">
+                <h2>Analysis Results</h2>
+            </div>
+
+            <div class="results-content">
+                
+                <!-- Dataset Statistics Summary Cards -->
+                <div class="statistics-section">
+                    <h3 class="subsection-title">Dataset Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Records</div>
+                            <div id="stat-records" class="stat-value">—</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Feature Count</div>
+                            <div id="stat-features" class="stat-value">—</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Completeness</div>
+                            <div id="stat-completeness" class="stat-value">—</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quality Issues List -->
+                <div class="quality-section">
+                    <h3 class="subsection-title">Detected Quality Issues</h3>
+                    <div id="quality-issues" class="issues-list">
+                        <p class="placeholder">No issues detected</p>
+                    </div>
+                </div>
+
+                <!-- Baseline Evaluation Metrics -->
+                <div class="evaluation-section">
+                    <h3 class="subsection-title">Baseline Model Evaluation</h3>
+                    <div id="model-metrics" class="metrics-box">
+                        <p class="placeholder">Model evaluation metrics will appear here</p>
+                    </div>
+                </div>
+
+                <!-- Bias Analysis Table (Conditional) -->
+                <div id="bias-section" class="bias-section hidden">
+                    <h3 class="subsection-title">Bias Analysis</h3>
+                    <div id="bias-table" class="bias-table">
+                        <p class="placeholder">Bias analysis table will appear here</p>
+                    </div>
+                </div>
+
+                <!-- Recommendations List -->
+                <div class="recommendations-section">
+                    <h3 class="subsection-title">Recommendations</h3>
+                    <div id="recommendations" class="recommendations-list">
+                        <p class="placeholder">Recommendations will appear here</p>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- FOOTER SECTION -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p class="footer-text">
+                <strong>Web-Based Dataset Quality and Bias Assessment for Machine Learning</strong><br>
+                Academic Project | Minor Project–II | 2026
+            </p>
+        </div>
+    </footer>
+
+    <!-- SCRIPT -->
+    <script src="script.js"></script>
+</body>
+</html>

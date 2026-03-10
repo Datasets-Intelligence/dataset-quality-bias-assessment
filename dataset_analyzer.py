@@ -11,86 +11,121 @@ from sklearn.metrics import accuracy_score, r2_score
 from sklearn.impute import SimpleImputer
 import warnings
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 
 class DatasetAnalyzer:
-    """
-    Core analyzer for dataset quality and bias assessment.
-    """
-    
-    def __init__(self, correlation_threshold: float = 0.8,
-                 imbalance_ratio: float = 0.3,
-                 overfitting_threshold: float = 0.15,
-                 fairness_gap_threshold: float = 0.1):
-        
+
+    def __init__(
+        self,
+        correlation_threshold: float = 0.8,
+        imbalance_ratio: float = 0.3,
+        overfitting_threshold: float = 0.15,
+        fairness_gap_threshold: float = 0.1,
+    ):
         self.correlation_threshold = correlation_threshold
         self.imbalance_ratio = imbalance_ratio
         self.overfitting_threshold = overfitting_threshold
         self.fairness_gap_threshold = fairness_gap_threshold
-        
+
+    # ================== MAIN ANALYSIS ==================
+
     def analyze(self, file_path: str, target_column: str) -> Dict[str, Any]:
-        
+
         result = {
-            'validation_status': 'pending',
-            'dataset_statistics': {},
-            'quality_issues': {},
-            'model_metrics': {},
-            'bias_findings': {},
-            'warnings': [],
-            'recommendations': []
+            "validation_status": "pending",
+            "dataset_statistics": {},
+            "quality_issues": {},
+            "model_metrics": {},
+            "bias_findings": {},
+            "visual_data": {},
+            "warnings": [],
+            "recommendations": [],
         }
-        
+
         try:
-            # Step 1: Validate input
-            validation_error = self._validate_input(file_path, target_column)
-            if validation_error:
-                result['validation_status'] = 'failed'
-                result['warnings'].append(validation_error)
+            # Step 1: Validate
+            error = self._validate_input(file_path, target_column)
+            if error:
+                result["validation_status"] = "failed"
+                result["warnings"].append(error)
                 return result
-            
-            # Step 2: Load dataset
+
+            # Step 2: Load data
             df = pd.read_csv(file_path)
-            
-            # Verify target column exists
             if target_column not in df.columns:
-                result['validation_status'] = 'failed'
-                result['warnings'].append(f"Target column '{target_column}' not found in dataset")
-                return result
-            
-            result['validation_status'] = 'passed'
-            
-            # Step 3: Dataset statistics
-            result['dataset_statistics'] = self._get_dataset_statistics(df, target_column)
-            
-            # Step 4: Quality analysis
-            result['quality_issues'] = self._analyze_quality(df, target_column)
-            
-            # Step 5: Model evaluation
+                raise ValueError(f"Target column '{target_column}' not found")
+
+            result["validation_status"] = "passed"
+
+            # Step 3: Stats
+            result["dataset_statistics"] = self._get_dataset_statistics(df, target_column)
+
+            # Step 4: Quality
+            result["quality_issues"] = self._analyze_quality(df, target_column)
+
+            # Step 5: Model
             model_results = self._evaluate_baseline_model(df, target_column)
-            result['model_metrics'] = model_results['metrics']
-            
-            # Step 6: Overfitting check
-            overfitting_result = self._check_overfitting(model_results['metrics'])
-            if overfitting_result:
-                result['warnings'].append(overfitting_result)
-            
-            # Step 7: Bias analysis
-            bias_results = self._analyze_bias(df, target_column, model_results)
-            result['bias_findings'] = bias_results
-            
-            # Step 8: Generate recommendations
-            result['recommendations'] = self._generate_recommendations(
-                result['quality_issues'],
-                result['model_metrics'],
-                result['bias_findings']
+            result["model_metrics"] = model_results["metrics"]
+
+            # Step 6: Visual data (✅ CORRECT PLACE)
+            result["visual_data"] = {
+                "missing_values": self._missing_values_visual(df),
+                "target_distribution": self._target_distribution_visual(df[target_column]),
+                "feature_distributions": self._feature_distributions_visual(df, target_column),
+                "prediction_vs_actual": self._prediction_visual(model_results),
+            }
+
+            # Step 7: Bias
+            result["bias_findings"] = self._analyze_bias(df, target_column, model_results)
+
+            # Step 8: Recommendations
+            result["recommendations"] = self._generate_recommendations(
+                result["quality_issues"],
+                result["model_metrics"],
+                result["bias_findings"],
             )
-            
+
         except Exception as e:
-            result['validation_status'] = 'error'
-            result['warnings'].append(f"Analysis error: {str(e)}")
-        
+            result["validation_status"] = "error"
+            result["warnings"].append(str(e))
+
         return result
+
+    # ================== VISUAL HELPERS ==================
+
+    def _missing_values_visual(self, df: pd.DataFrame):
+        counts = df.isnull().sum()
+        return {
+            "columns": counts[counts > 0].index.tolist(),
+            "counts": counts[counts > 0].astype(int).tolist(),
+        }
+
+    def _target_distribution_visual(self, target: pd.Series):
+        if not pd.api.types.is_numeric_dtype(target) or target.nunique() <= 10:
+            vc = target.value_counts()
+            return {"type": "categorical", "labels": vc.index.astype(str).tolist(), "counts": vc.tolist()}
+        counts, bins = np.histogram(target.dropna(), bins=20)
+        return {"type": "numerical", "bins": bins.tolist(), "counts": counts.tolist()}
+
+    def _feature_distributions_visual(self, df, target_column, max_features=5):
+        X = df.drop(columns=[target_column])
+        num_cols = X.select_dtypes(include=[np.number]).columns[:max_features]
+        out = {}
+        for col in num_cols:
+            counts, bins = np.histogram(X[col].dropna(), bins=20)
+            out[col] = {"bins": bins.tolist(), "counts": counts.tolist()}
+        return out
+
+    def _prediction_visual(self, model_results, sample_size=200):
+        y_test = model_results["y_test"]
+        y_pred = model_results["y_pred"]
+        return {
+            "actual": y_test[:sample_size].tolist(),
+            "predicted": y_pred[:sample_size].tolist(),
+        }
+
+
     
     def _validate_input(self, file_path: str, target_column: str) -> Optional[str]:
         """
@@ -572,6 +607,52 @@ def analyze_dataset(file_path: str, target_column: str, **kwargs) -> Dict[str, A
    
     analyzer = DatasetAnalyzer(**kwargs)
     return analyzer.analyze(file_path, target_column)
+
+def _target_distribution_visual(self, target: pd.Series) -> Dict[str, Any]:
+    if not pd.api.types.is_numeric_dtype(target) or target.nunique() <= 10:
+        vc = target.value_counts()
+        return {
+            "type": "categorical",
+            "labels": vc.index.astype(str).tolist(),
+            "counts": vc.values.tolist()
+        }
+    else:
+        counts, bins = np.histogram(target.dropna(), bins=20)
+        return {
+            "type": "numerical",
+            "bins": bins.tolist(),
+            "counts": counts.tolist()
+        }
+
+
+def _feature_distributions_visual(self, df: pd.DataFrame, target_column: str, max_features: int = 5):
+    X = df.drop(columns=[target_column])
+    num_cols = X.select_dtypes(include=[np.number]).columns[:max_features]
+
+    distributions = {}
+
+    for col in num_cols:
+        values, bins = np.histogram(X[col].dropna(), bins=20)
+        distributions[col] = {
+            "bins": bins.tolist(),
+            "counts": values.tolist()
+        }
+
+    return distributions
+
+
+def _prediction_visual(self, model_results: Dict[str, Any], sample_size: int = 200):
+    y_test = model_results.get("y_test")
+    y_pred = model_results.get("y_pred")
+
+    if y_test is None or y_pred is None:
+        return {}
+
+    return {
+        "actual": y_test[:sample_size].tolist(),
+        "predicted": y_pred[:sample_size].tolist()
+    }
+
 
 
 if __name__ == "__main__":

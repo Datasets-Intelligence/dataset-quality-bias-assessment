@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dataset Quality and Bias Assessment</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <!-- HEADER SECTION -->
@@ -123,6 +124,25 @@
                     <h3 class="subsection-title">Bias Analysis</h3>
                     <div id="bias-table" class="bias-table">
                         <p class="placeholder">Bias analysis table will appear here</p>
+                    </div>
+                </div>
+
+                <!-- Visualizations Section -->
+                <div id="visualizations-section" class="visualizations-section">
+                    <h3 class="subsection-title">Data Visualizations</h3>
+                    <div class="charts-grid">
+                        <div class="chart-container">
+                            <h4>Missing Values</h4>
+                            <canvas id="missing-values-chart"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <h4>Target Distribution</h4>
+                            <canvas id="target-dist-chart"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <h4>Prediction vs Actual (Sample)</h4>
+                            <canvas id="pred-actual-chart"></canvas>
+                        </div>
                     </div>
                 </div>
 

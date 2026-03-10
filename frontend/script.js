@@ -1,11 +1,11 @@
-
 const API_BASE_URL = 'http://127.0.0.1:8000';
 let appState = {
     uploadedFile: null,           // Filename reference from backend
     targetColumn: null,           // Target column name
     analysisResults: null,        // Complete results from backend
     isUploading: false,           // Upload in progress
-    isAnalyzing: false            // Analysis in progress
+    isAnalyzing: false,            // Analysis in progress
+    charts: {}                    // Chart.js instances
 };
 
 
@@ -58,6 +58,12 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.fileInput.addEventListener('change', handleFileChange);
     elements.runButton.addEventListener('click', handleRunAnalysis);
     elements.errorClose.addEventListener('click', hideError);
+
+    // Initialize Chart.js defaults
+    if (window.Chart) {
+        Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        Chart.defaults.color = '#4a5568';
+    }
 });
 
 
@@ -244,6 +250,7 @@ function renderResults(results) {
     renderStatistics(results.dataset_statistics);
     renderQualityIssues(results.quality_issues);
     renderModelMetrics(results.model_metrics);
+    renderVisualizations(results.visual_data); // Add visualization rendering
     renderBiasAnalysis(results.bias_findings);
     renderRecommendations(results.recommendations);
 }
@@ -345,6 +352,215 @@ function renderModelMetrics(metrics) {
     
     elements.modelMetrics.innerHTML = metricsHTML;
 }
+
+/**
+ * Render Chart.js visualizations
+ */
+function renderVisualizations(visualData) {
+    if (!window.Chart) {
+        console.error('Chart.js not loaded');
+        return;
+    }
+
+    if (!visualData) return;
+
+    // Destroy existing charts to prevent memory leaks and overlapping
+    destroyCharts();
+
+    // 1. Missing Values Chart
+    renderMissingValuesChart(visualData.missing_values);
+
+    // 2. Target Distribution Chart
+    renderTargetDistributionChart(visualData.target_distribution);
+
+    // 3. Prediction vs Actual Chart
+    renderPredictionVsActualChart(visualData.prediction_vs_actual);
+}
+
+/**
+ * Destroy all active Chart.js instances
+ */
+function destroyCharts() {
+    Object.keys(appState.charts).forEach(key => {
+        if (appState.charts[key]) {
+            appState.charts[key].destroy();
+            appState.charts[key] = null;
+        }
+    });
+}
+
+/**
+ * Render Missing Values Bar Chart
+ */
+function renderMissingValuesChart(data) {
+    const ctx = document.getElementById('missing-values-chart').getContext('2d');
+    
+    if (!data || !data.columns || data.columns.length === 0) {
+        // Render a placeholder or empty state text on canvas if possible, or just skip
+        // For now, let's just clear the canvas or leave it blank
+        return;
+    }
+
+    appState.charts.missingValues = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.columns,
+            datasets: [{
+                label: 'Missing Values Count',
+                data: data.counts,
+                backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                borderColor: 'rgba(239, 68, 68, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Count' }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Render Target Distribution Chart (Pie or Histogram)
+ */
+function renderTargetDistributionChart(data) {
+    const ctx = document.getElementById('target-dist-chart').getContext('2d');
+
+    if (!data) return;
+
+    if (data.type === 'categorical') {
+        // Pie Chart for Categorical
+        appState.charts.targetDist = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: data.labels,
+                datasets: [{
+                    data: data.counts,
+                    backgroundColor: [
+                        'rgba(102, 126, 234, 0.7)',
+                        'rgba(118, 75, 162, 0.7)',
+                        'rgba(56, 178, 172, 0.7)',
+                        'rgba(237, 137, 54, 0.7)',
+                        'rgba(245, 101, 101, 0.7)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false
+            }
+        });
+    } else {
+        // Bar Chart (Histogram) for Numerical
+        // Note: 'bins' usually has N+1 edges for N counts. Chart.js bar chart needs N labels.
+        // We'll format the bins as range labels.
+        const labels = data.bins.slice(0, -1).map((val, i) => {
+            const nextVal = data.bins[i+1];
+            return `${parseFloat(val).toFixed(1)} - ${parseFloat(nextVal).toFixed(1)}`;
+        });
+
+        appState.charts.targetDist = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Frequency',
+                    data: data.counts,
+                    backgroundColor: 'rgba(102, 126, 234, 0.6)',
+                    borderColor: 'rgba(102, 126, 234, 1)',
+                    borderWidth: 1,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45,
+                            font: { size: 10 }
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Count' }
+                    }
+                }
+            }
+        });
+    }
+}
+
+/**
+ * Render Prediction vs Actual Scatter Plot
+ */
+function renderPredictionVsActualChart(data) {
+    const ctx = document.getElementById('pred-actual-chart').getContext('2d');
+
+    if (!data || !data.actual || !data.predicted) return;
+
+    // Create scatter points {x: actual, y: predicted}
+    const scatterData = data.actual.map((actual, i) => ({
+        x: actual,
+        y: data.predicted[i]
+    }));
+
+    // Find min/max for ideal line
+    const allValues = [...data.actual, ...data.predicted];
+    const minVal = Math.min(...allValues);
+    const maxVal = Math.max(...allValues);
+
+    appState.charts.predActual = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                {
+                    label: 'Predicted vs Actual',
+                    data: scatterData,
+                    backgroundColor: 'rgba(102, 126, 234, 0.5)',
+                    borderColor: 'rgba(102, 126, 234, 1)',
+                    borderWidth: 1,
+                    pointRadius: 3
+                },
+                {
+                    label: 'Perfect Prediction (Ideal)',
+                    data: [{x: minVal, y: minVal}, {x: maxVal, y: maxVal}],
+                    type: 'line',
+                    borderColor: 'rgba(160, 174, 192, 0.8)',
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false,
+                    borderWidth: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'linear',
+                    position: 'bottom',
+                    title: { display: true, text: 'Actual Values' }
+                },
+                y: {
+                    title: { display: true, text: 'Predicted Values' }
+                }
+            }
+        }
+    });
+}
+
 
 /**
  * Render bias analysis (if available)

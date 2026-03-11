@@ -47,7 +47,12 @@ const elements = {
     biasTable: document.getElementById('bias-table'),
     
     // Recommendations
-    recommendations: document.getElementById('recommendations')
+    recommendations: document.getElementById('recommendations'),
+
+    // Suggestion chips
+    suggestionContainer: document.getElementById('suggestion-container'),
+    suggestionLoading: document.getElementById('suggestion-loading'),
+    suggestionChips: document.getElementById('suggestion-chips')
 };
 
 
@@ -136,6 +141,9 @@ async function uploadDataset(file) {
         // Enable target input and analysis button
         elements.targetInput.disabled = false;
         updateRunButtonState();
+
+        // Auto-fetch target column suggestions
+        fetchTargetSuggestions(data.file);
         
     } catch (error) {
         setLoadingState('uploading', false);
@@ -162,6 +170,7 @@ function resetUploadUI() {
     elements.targetInput.disabled = true;
     appState.uploadedFile = null;
     updateRunButtonState();
+    hideSuggestions();
 }
 
 
@@ -250,7 +259,9 @@ function renderResults(results) {
     renderStatistics(results.dataset_statistics);
     renderQualityIssues(results.quality_issues);
     renderModelMetrics(results.model_metrics);
-    renderVisualizations(results.visual_data); // Add visualization rendering
+    // Add visualization rendering
+    const totalRows = results.dataset_statistics ? results.dataset_statistics.total_rows : 0;
+    renderVisualizations(results.visual_data, totalRows); 
     renderBiasAnalysis(results.bias_findings);
     renderRecommendations(results.recommendations);
 }
@@ -356,7 +367,7 @@ function renderModelMetrics(metrics) {
 /**
  * Render Chart.js visualizations
  */
-function renderVisualizations(visualData) {
+function renderVisualizations(visualData, totalRows = 0) {
     if (!window.Chart) {
         console.error('Chart.js not loaded');
         return;
@@ -364,17 +375,33 @@ function renderVisualizations(visualData) {
 
     if (!visualData) return;
 
+    // Determine animation based on dataset size
+    const animate = totalRows <= 50000;
+    
+    // Reset layout
+    const mainGrid = document.getElementById('main-charts-grid');
+    if (mainGrid) {
+        mainGrid.classList.remove('charts-grid-2col');
+    }
+    const predContainer = document.getElementById('pred-actual-container');
+    if (predContainer) {
+        predContainer.classList.remove('chart-full-width');
+    }
+
     // Destroy existing charts to prevent memory leaks and overlapping
     destroyCharts();
 
     // 1. Missing Values Chart
-    renderMissingValuesChart(visualData.missing_values);
+    renderMissingValuesChart(visualData.missing_values, animate, mainGrid);
 
     // 2. Target Distribution Chart
-    renderTargetDistributionChart(visualData.target_distribution);
+    renderTargetDistributionChart(visualData.target_distribution, animate);
 
-    // 3. Prediction vs Actual Chart
-    renderPredictionVsActualChart(visualData.prediction_vs_actual);
+    // 3. Prediction vs Actual Chart / Confusion Matrix
+    renderPredictionVsActualChart(visualData.prediction_vs_actual, animate, predContainer);
+    
+    // 4. Feature Distributions
+    renderFeatureDistributionsChart(visualData.feature_distributions, animate);
 }
 
 /**
@@ -392,14 +419,35 @@ function destroyCharts() {
 /**
  * Render Missing Values Bar Chart
  */
-function renderMissingValuesChart(data) {
-    const ctx = document.getElementById('missing-values-chart').getContext('2d');
+function renderMissingValuesChart(data, animate, gridContainer) {
+    const wrapper = document.getElementById('missing-values-wrapper');
+    const container = document.getElementById('missing-values-container');
     
     if (!data || !data.columns || data.columns.length === 0) {
-        // Render a placeholder or empty state text on canvas if possible, or just skip
-        // For now, let's just clear the canvas or leave it blank
+        container.style.display = 'none';
+        if (gridContainer) gridContainer.classList.add('charts-grid-2col');
+        
+        let successDiv = document.getElementById('missing-values-success');
+        if (!successDiv) {
+            successDiv = document.createElement('div');
+            successDiv.id = 'missing-values-success';
+            successDiv.className = 'success-message';
+            successDiv.style.marginBottom = '1.5rem';
+            successDiv.innerHTML = '✓ No missing values detected — dataset is complete';
+            gridContainer.parentNode.insertBefore(successDiv, gridContainer);
+        }
+        successDiv.style.display = 'flex';
         return;
     }
+    
+    // Restore if there are misses
+    container.style.display = 'block';
+    let successDiv = document.getElementById('missing-values-success');
+    if (successDiv) successDiv.style.display = 'none';
+
+    wrapper.style.height = '250px';
+    wrapper.innerHTML = '<canvas id="missing-values-chart"></canvas>';
+    const ctx = document.getElementById('missing-values-chart').getContext('2d');
 
     appState.charts.missingValues = new Chart(ctx, {
         type: 'bar',
@@ -414,6 +462,7 @@ function renderMissingValuesChart(data) {
             }]
         },
         options: {
+            animation: animate,
             responsive: true,
             maintainAspectRatio: false,
             scales: {
@@ -429,38 +478,97 @@ function renderMissingValuesChart(data) {
 /**
  * Render Target Distribution Chart (Pie or Histogram)
  */
-function renderTargetDistributionChart(data) {
-    const ctx = document.getElementById('target-dist-chart').getContext('2d');
-
+function renderTargetDistributionChart(data, animate) {
+    const wrapper = document.getElementById('target-dist-wrapper');
     if (!data) return;
 
+    wrapper.innerHTML = '<canvas id="target-dist-chart"></canvas>';
+    const ctx = document.getElementById('target-dist-chart').getContext('2d');
+
     if (data.type === 'categorical') {
-        // Pie Chart for Categorical
-        appState.charts.targetDist = new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: data.labels,
-                datasets: [{
-                    data: data.counts,
-                    backgroundColor: [
-                        'rgba(102, 126, 234, 0.7)',
-                        'rgba(118, 75, 162, 0.7)',
-                        'rgba(56, 178, 172, 0.7)',
-                        'rgba(237, 137, 54, 0.7)',
-                        'rgba(245, 101, 101, 0.7)'
-                    ],
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false
+        if (data.labels.length > 10) {
+            // Horizontal bar chart for many classes
+            let labels = [...data.labels];
+            let counts = [...data.counts];
+            
+            // Sort by count descending
+            const combined = labels.map((l, i) => ({l, c: counts[i]}));
+            combined.sort((a, b) => b.c - a.c);
+            
+            let note = null;
+            if (combined.length > 20) {
+                note = `Showing top 20 of ${combined.length} classes`;
+                combined.splice(20);
             }
-        });
+            
+            labels = combined.map(x => x.l);
+            counts = combined.map(x => x.c);
+            
+            // Dynamic height (classes * 28px, min 300px max 600px)
+            const height = Math.min(Math.max(labels.length * 28, 300), 600);
+            wrapper.style.height = `${height}px`;
+
+            if (note) {
+                const sub = document.getElementById('target-dist-container').querySelector('.chart-subtitle');
+                if (sub && !sub.textContent.includes(note)) sub.textContent += ` (${note})`;
+            }
+
+            appState.charts.targetDist = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Count',
+                        data: counts,
+                        backgroundColor: 'rgba(118, 75, 162, 0.6)',
+                        borderColor: 'rgba(118, 75, 162, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    animation: animate,
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { beginAtZero: true }
+                    }
+                }
+            });
+        } else {
+            // Pie Chart for few classes
+            wrapper.style.height = '300px';
+            appState.charts.targetDist = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        data: data.counts,
+                        backgroundColor: [
+                            'rgba(102, 126, 234, 0.7)',
+                            'rgba(118, 75, 162, 0.7)',
+                            'rgba(56, 178, 172, 0.7)',
+                            'rgba(237, 137, 54, 0.7)',
+                            'rgba(245, 101, 101, 0.7)',
+                            'rgba(72, 187, 120, 0.7)',
+                            'rgba(236, 201, 75, 0.7)',
+                            'rgba(159, 122, 234, 0.7)',
+                            'rgba(246, 135, 179, 0.7)',
+                            'rgba(160, 174, 192, 0.7)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    animation: animate,
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
     } else {
-        // Bar Chart (Histogram) for Numerical
-        // Note: 'bins' usually has N+1 edges for N counts. Chart.js bar chart needs N labels.
-        // We'll format the bins as range labels.
+        // Histogram for Numerical
+        wrapper.style.height = '300px';
         const labels = data.bins.slice(0, -1).map((val, i) => {
             const nextVal = data.bins[i+1];
             return `${parseFloat(val).toFixed(1)} - ${parseFloat(nextVal).toFixed(1)}`;
@@ -481,6 +589,7 @@ function renderTargetDistributionChart(data) {
                 }]
             },
             options: {
+                animation: animate,
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
@@ -502,62 +611,266 @@ function renderTargetDistributionChart(data) {
 }
 
 /**
- * Render Prediction vs Actual Scatter Plot
+ * Render Prediction vs Actual or Confusion Matrix Chart
  */
-function renderPredictionVsActualChart(data) {
+function renderPredictionVsActualChart(data, animate, containerBlock) {
+    const wrapper = document.getElementById('pred-actual-wrapper');
+    const title = document.getElementById('pred-actual-title');
+    const subtitle = document.getElementById('pred-actual-subtitle');
+    
+    if (!data || !data.type) return;
+
+    wrapper.innerHTML = '<canvas id="pred-actual-chart"></canvas>';
     const ctx = document.getElementById('pred-actual-chart').getContext('2d');
 
-    if (!data || !data.actual || !data.predicted) return;
+    if (data.type === 'confusion_matrix') {
+        title.textContent = 'Confusion Matrix';
+        subtitle.textContent = 'Rows = Actual class, Columns = Predicted class. Diagonal = correct predictions' + (data.note ? ` (${data.note})` : '');
+        
+        const numClasses = data.labels.length;
+        if (numClasses > 8 && containerBlock) {
+            containerBlock.classList.add('chart-full-width');
+        }
+        
+        const height = Math.min(Math.max(numClasses * 40, 400), 700);
+        wrapper.style.height = `${height}px`;
 
-    // Create scatter points {x: actual, y: predicted}
-    const scatterData = data.actual.map((actual, i) => ({
-        x: actual,
-        y: data.predicted[i]
-    }));
-
-    // Find min/max for ideal line
-    const allValues = [...data.actual, ...data.predicted];
-    const minVal = Math.min(...allValues);
-    const maxVal = Math.max(...allValues);
-
-    appState.charts.predActual = new Chart(ctx, {
-        type: 'scatter',
-        data: {
-            datasets: [
-                {
-                    label: 'Predicted vs Actual',
-                    data: scatterData,
-                    backgroundColor: 'rgba(102, 126, 234, 0.5)',
-                    borderColor: 'rgba(102, 126, 234, 1)',
-                    borderWidth: 1,
-                    pointRadius: 3
-                },
-                {
-                    label: 'Perfect Prediction (Ideal)',
-                    data: [{x: minVal, y: minVal}, {x: maxVal, y: maxVal}],
-                    type: 'line',
-                    borderColor: 'rgba(160, 174, 192, 0.8)',
-                    borderDash: [5, 5],
-                    pointRadius: 0,
-                    fill: false,
-                    borderWidth: 2
+        const maxVal = Math.max(...data.matrix.flat());
+        const bubbleData = [];
+        
+        for (let i = 0; i < numClasses; i++) { // Actual (Y axis)
+            for (let j = 0; j < numClasses; j++) { // Predicted (X axis)
+                const count = data.matrix[i][j];
+                const intensity = maxVal > 0 ? (count / maxVal) : 0;
+                // Deep purple #764ba2 to white interpolation
+                const r = Math.round(255 - intensity * (255 - 118));
+                const g = Math.round(255 - intensity * (255 - 75));
+                const b = Math.round(255 - intensity * (255 - 162));
+                
+                // Highlight diagonal
+                let borderColor = '#e2e8f0';
+                let borderWidth = 1;
+                if (i === j) {
+                    borderColor = '#667eea';
+                    borderWidth = 2;
                 }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    type: 'linear',
-                    position: 'bottom',
-                    title: { display: true, text: 'Actual Values' }
-                },
-                y: {
-                    title: { display: true, text: 'Predicted Values' }
-                }
+
+                bubbleData.push({
+                    x: j, 
+                    y: numClasses - 1 - i, // invert y so actual 0 is at top
+                    v: count, // store true count
+                    r: 20, // bubble size
+                    bgColor: `rgba(${r}, ${g}, ${b}, ${intensity > 0 ? 0.9 : 0.1})`,
+                    bColor: borderColor,
+                    bWidth: borderWidth
+                });
             }
         }
+
+        appState.charts.predActual = new Chart(ctx, {
+            type: 'bubble',
+            data: {
+                datasets: [{
+                    label: 'Confusion Matrix',
+                    data: bubbleData,
+                    backgroundColor: (ctx) => ctx.raw?.bgColor || 'white',
+                    borderColor: (ctx) => ctx.raw?.bColor || '#eee',
+                    borderWidth: (ctx) => ctx.raw?.bWidth || 1,
+                    pointStyle: 'rectRounded',
+                    radius: function(context) {
+                        const chart = context.chart;
+                        const w = chart.chartArea ? chart.chartArea.width / numClasses : 0;
+                        const h = chart.chartArea ? chart.chartArea.height / numClasses : 0;
+                        return Math.min(w, h) / 2 - 2; // fill cell
+                    }
+                }]
+            },
+            options: {
+                animation: animate,
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                const raw = context.raw;
+                                const actual = data.labels[numClasses - 1 - raw.y];
+                                const predicted = data.labels[raw.x];
+                                return `Actual: ${actual}, Predicted: ${predicted} - Count: ${raw.v}`;
+                            }
+                        }
+                    },
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        min: -0.5, max: numClasses - 0.5,
+                        ticks: {
+                            stepSize: 1,
+                            callback: (value) => data.labels[value] || ''
+                        },
+                        title: { display: true, text: 'Predicted Class' }
+                    },
+                    y: {
+                        min: -0.5, max: numClasses - 0.5,
+                        ticks: {
+                            stepSize: 1,
+                            callback: (value) => data.labels[numClasses - 1 - value] || ''
+                        },
+                        title: { display: true, text: 'Actual Class' }
+                    }
+                }
+            },
+            plugins: [{
+                id: 'cmTextPlugin',
+                afterDatasetsDraw(chart) {
+                    const ctx = chart.ctx;
+                    chart.data.datasets.forEach((dataset, i) => {
+                        const meta = chart.getDatasetMeta(i);
+                        meta.data.forEach((element, index) => {
+                            const val = dataset.data[index].v;
+                            if (val > 0) {
+                                ctx.fillStyle = dataset.data[index].bgColor.indexOf(', 0.1)') > -1 ? '#4a5568' : '#fff';
+                                const fontSize = 12;
+                                ctx.font = `600 ${fontSize}px sans-serif`;
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
+                                ctx.fillText(val, element.x, element.y);
+                            }
+                        });
+                    });
+                }
+            }]
+        });
+
+    } else if (data.type === 'scatter') {
+        title.textContent = 'Prediction vs Actual';
+        subtitle.textContent = 'Each dot is one test sample. Dots on the line = perfect prediction';
+        
+        wrapper.style.height = '350px';
+        const scatterData = data.actual.map((actual, i) => ({
+            x: actual,
+            y: data.predicted[i]
+        }));
+
+        const allValues = [...data.actual, ...data.predicted];
+        const minVal = Math.min(...allValues);
+        const maxVal = Math.max(...allValues);
+
+        appState.charts.predActual = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    {
+                        label: 'Predicted vs Actual',
+                        data: scatterData,
+                        backgroundColor: 'rgba(102, 126, 234, 0.5)',
+                        borderColor: 'rgba(102, 126, 234, 1)',
+                        borderWidth: 1,
+                        pointRadius: 3
+                    },
+                    {
+                        label: 'Perfect Prediction',
+                        data: [{x: minVal, y: minVal}, {x: maxVal, y: maxVal}],
+                        type: 'line',
+                        borderColor: 'rgba(160, 174, 192, 0.8)',
+                        borderDash: [5, 5],
+                        pointRadius: 0,
+                        fill: false,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                animation: animate,
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { title: { display: true, text: 'Actual Values' } },
+                    y: { title: { display: true, text: 'Predicted Values' } }
+                }
+            }
+        });
+    }
+}
+
+/**
+ * Render Feature Distributions Charts
+ */
+function renderFeatureDistributionsChart(featureData, animate) {
+    const section = document.getElementById('feature-distributions-section');
+    const grid = document.getElementById('feature-charts-grid');
+    
+    if (!featureData || Object.keys(featureData).length === 0) {
+        section.classList.add('hidden');
+        return;
+    }
+    
+    section.classList.remove('hidden');
+    grid.innerHTML = '';
+    
+    let index = 0;
+    Object.keys(featureData).forEach((feature) => {
+        const data = featureData[feature];
+        
+        // Create container elements
+        const container = document.createElement('div');
+        container.className = 'chart-container';
+        
+        const header = document.createElement('h4');
+        header.textContent = feature;
+        
+        const subtitle = document.createElement('div');
+        subtitle.className = 'chart-subtitle';
+        subtitle.textContent = 'Distribution of values in this feature';
+        
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'relative';
+        wrapper.style.width = '100%';
+        wrapper.style.height = '200px';
+        
+        const canvas = document.createElement('canvas');
+        const id = `feature-chart-${index}`;
+        canvas.id = id;
+        
+        wrapper.appendChild(canvas);
+        container.appendChild(header);
+        container.appendChild(subtitle);
+        container.appendChild(wrapper);
+        grid.appendChild(container);
+
+        // Render chart
+        const ctx = canvas.getContext('2d');
+        const labels = data.bins.slice(0, -1).map((val, i) => {
+            return `${parseFloat(val).toFixed(1)} - ${parseFloat(data.bins[i+1]).toFixed(1)}`;
+        });
+        
+        appState.charts[`featureChart_${index}`] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Frequency',
+                    data: data.counts,
+                    backgroundColor: 'rgba(56, 178, 172, 0.6)', // Teal color
+                    borderColor: 'rgba(56, 178, 172, 1)',
+                    borderWidth: 1,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
+                }]
+            },
+            options: {
+                animation: animate,
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { display: false } }, // Hide x labels for cleanliness on small charts
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+        index++;
     });
 }
 
@@ -669,8 +982,101 @@ function updateRunButtonState() {
     elements.runButton.disabled = !isEnabled || appState.isAnalyzing;
 }
 
+
+// ============================================
+// TARGET COLUMN SUGGESTIONS
+// ============================================
+
+/**
+ * Fetch target column suggestions from backend
+ */
+async function fetchTargetSuggestions(filename) {
+    // Show container with loading state
+    elements.suggestionContainer.classList.remove('hidden');
+    elements.suggestionLoading.classList.remove('hidden');
+    elements.suggestionChips.innerHTML = '';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/suggest_target`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: filename })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.suggestions || data.suggestions.length === 0) {
+            hideSuggestions();
+            return;
+        }
+
+        elements.suggestionLoading.classList.add('hidden');
+        renderSuggestionChips(data.suggestions);
+
+    } catch (err) {
+        // Silently hide — do not block manual entry
+        hideSuggestions();
+    }
+}
+
+/**
+ * Render suggestion chips
+ */
+function renderSuggestionChips(suggestions) {
+    elements.suggestionChips.innerHTML = '';
+
+    suggestions.forEach(s => {
+        const chip = document.createElement('button');
+        chip.className = 'suggestion-chip';
+        chip.type = 'button';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'suggestion-chip-name';
+        nameSpan.textContent = s.column;
+
+        const badge = document.createElement('span');
+        badge.className = `suggestion-type-badge badge-${s.type}`;
+        badge.textContent = s.type;
+
+        chip.appendChild(nameSpan);
+        chip.appendChild(badge);
+
+        chip.addEventListener('click', () => {
+            // Fill target input
+            elements.targetInput.value = s.column;
+            appState.targetColumn = s.column;
+            updateRunButtonState();
+
+            // Highlight selected chip, deselect others
+            document.querySelectorAll('.suggestion-chip').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+        });
+
+        elements.suggestionChips.appendChild(chip);
+    });
+}
+
+/**
+ * Hide and clear suggestion area
+ */
+function hideSuggestions() {
+    elements.suggestionContainer.classList.add('hidden');
+    elements.suggestionLoading.classList.add('hidden');
+    elements.suggestionChips.innerHTML = '';
+}
+
 // Enable/disable analysis button as user types target column
-elements.targetInput.addEventListener('input', updateRunButtonState);
+elements.targetInput.addEventListener('input', () => {
+    updateRunButtonState();
+
+    // Deselect chips when the user types manually
+    document.querySelectorAll('.suggestion-chip').forEach(c => c.classList.remove('active'));
+
+    // If the input is cleared, deselect (chips stay visible)
+    if (elements.targetInput.value.trim() === '') {
+        document.querySelectorAll('.suggestion-chip').forEach(c => c.classList.remove('active'));
+    }
+});
 
 
 // ERROR HANDLING

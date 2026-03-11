@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.metrics import accuracy_score, r2_score
+from sklearn.metrics import accuracy_score, r2_score, confusion_matrix
 from sklearn.impute import SimpleImputer
 import warnings
 
@@ -74,6 +74,7 @@ class DatasetAnalyzer:
                 "target_distribution": self._target_distribution_visual(df[target_column]),
                 "feature_distributions": self._feature_distributions_visual(df, target_column),
                 "prediction_vs_actual": self._prediction_visual(model_results),
+                "total_rows": len(df),
             }
 
             # Step 7: Bias
@@ -118,12 +119,48 @@ class DatasetAnalyzer:
         return out
 
     def _prediction_visual(self, model_results, sample_size=200):
-        y_test = model_results["y_test"]
-        y_pred = model_results["y_pred"]
-        return {
-            "actual": y_test[:sample_size].tolist(),
-            "predicted": y_pred[:sample_size].tolist(),
-        }
+        if "y_test" not in model_results or "y_pred" not in model_results:
+            return {}
+
+        y_test = list(model_results["y_test"])
+        y_pred = list(model_results["y_pred"])
+        
+        problem_type = model_results.get("metrics", {}).get("problem_type", "regression")
+
+        if problem_type == "classification":
+            le_target = model_results.get("target_encoder")
+            unique_labels = sorted(list(set(y_test) | set(y_pred)))
+            
+            note = ""
+            if len(unique_labels) > 15:
+                # Get top 15 by frequency in y_test
+                val_counts = pd.Series(y_test).value_counts()
+                top_15_labels = val_counts.nlargest(15).index.tolist()
+                cm = confusion_matrix(y_test, y_pred, labels=top_15_labels)
+                unique_labels = top_15_labels
+                note = "Showing top 15 classes by frequency"
+            else:
+                cm = confusion_matrix(y_test, y_pred, labels=unique_labels)
+
+            labels_str = []
+            if le_target:
+                labels_str = list(le_target.inverse_transform(unique_labels))
+                labels_str = [str(l) for l in labels_str]
+            else:
+                labels_str = [str(l) for l in unique_labels]
+
+            return {
+                "type": "confusion_matrix",
+                "labels": labels_str,
+                "matrix": cm.tolist(),
+                "note": note if note else None
+            }
+        else:
+            return {
+                "type": "scatter",
+                "actual": y_test[:sample_size],
+                "predicted": y_pred[:sample_size]
+            }
 
 
     
@@ -415,6 +452,7 @@ class DatasetAnalyzer:
             'y_test': y_test,
             'y_pred': test_pred,
             'test_indices': X_test.index,
+            'target_encoder': le_target if is_classification else None,
             'metrics': {
                 'problem_type': 'classification' if is_classification else 'regression',
                 'model_type': type(model).__name__,
@@ -608,52 +646,80 @@ def analyze_dataset(file_path: str, target_column: str, **kwargs) -> Dict[str, A
     analyzer = DatasetAnalyzer(**kwargs)
     return analyzer.analyze(file_path, target_column)
 
-def _target_distribution_visual(self, target: pd.Series) -> Dict[str, Any]:
-    if not pd.api.types.is_numeric_dtype(target) or target.nunique() <= 10:
-        vc = target.value_counts()
-        return {
-            "type": "categorical",
-            "labels": vc.index.astype(str).tolist(),
-            "counts": vc.values.tolist()
-        }
-    else:
-        counts, bins = np.histogram(target.dropna(), bins=20)
-        return {
-            "type": "numerical",
-            "bins": bins.tolist(),
-            "counts": counts.tolist()
-        }
 
+def suggest_target_columns(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Analyze a CSV file and suggest the top 3 most likely target columns.
 
-def _feature_distributions_visual(self, df: pd.DataFrame, target_column: str, max_features: int = 5):
-    X = df.drop(columns=[target_column])
-    num_cols = X.select_dtypes(include=[np.number]).columns[:max_features]
+    Scoring rules:
+        - Column name contains keywords (target, label, class, output, result,
+          outcome, predict, y)                                         → +40
+        - Column is the last column in the dataset                     → +20
+        - Numeric column with 2–10 unique values (likely class labels) → +25
+        - Categorical (object) column with 2–20 unique values          → +20
+        - Column has > 30 % missing values                             → −30
+        - Column has only 1 unique value (constant)                    → −50
 
-    distributions = {}
+    Returns:
+        List of up to 3 dicts sorted by descending score, each containing:
+        {"column": str, "score": int, "type": "classification"|"regression"}
+    """
+    TARGET_KEYWORDS = {"target", "label", "class", "output", "result",
+                       "outcome", "predict", "y"}
 
-    for col in num_cols:
-        values, bins = np.histogram(X[col].dropna(), bins=20)
-        distributions[col] = {
-            "bins": bins.tolist(),
-            "counts": values.tolist()
-        }
+    df = pd.read_csv(file_path)
 
-    return distributions
+    scored: List[Dict[str, Any]] = []
 
+    last_col = df.columns[-1] if len(df.columns) > 0 else None
 
-def _prediction_visual(self, model_results: Dict[str, Any], sample_size: int = 200):
-    y_test = model_results.get("y_test")
-    y_pred = model_results.get("y_pred")
+    for col in df.columns:
+        score = 0
+        col_lower = col.lower()
 
-    if y_test is None or y_pred is None:
-        return {}
+        # ── Keyword match ──────────────────────────────────────────
+        if any(kw in col_lower for kw in TARGET_KEYWORDS):
+            score += 40
 
-    return {
-        "actual": y_test[:sample_size].tolist(),
-        "predicted": y_pred[:sample_size].tolist()
-    }
+        # ── Last-column bonus ──────────────────────────────────────
+        if col == last_col:
+            score += 20
 
+        n_unique = df[col].nunique()
 
+        # ── Numeric with few unique values (likely class labels) ───
+        if pd.api.types.is_numeric_dtype(df[col]):
+            if 2 <= n_unique <= 10:
+                score += 25
+        # ── Categorical with moderate cardinality ──────────────────
+        elif df[col].dtype == object:
+            if 2 <= n_unique <= 20:
+                score += 20
+
+        # ── High missing-value penalty ─────────────────────────────
+        missing_pct = df[col].isnull().mean()
+        if missing_pct > 0.30:
+            score -= 30
+
+        # ── Constant-column penalty ────────────────────────────────
+        if n_unique <= 1:
+            score -= 50
+
+        # ── Determine detected type ───────────────────────────────
+        if pd.api.types.is_numeric_dtype(df[col]) and n_unique > 10:
+            detected_type = "regression"
+        else:
+            detected_type = "classification"
+
+        scored.append({
+            "column": col,
+            "score": score,
+            "type": detected_type,
+        })
+
+    # Sort descending by score, return top 3
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:3]
 
 if __name__ == "__main__":
     # Example usage

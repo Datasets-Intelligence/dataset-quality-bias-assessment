@@ -416,14 +416,15 @@ body {
     border-radius: 6px;
     padding: 1.5rem;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.5rem;
 }
 
 .metric-item {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    min-width: 0;
 }
 
 .metric-label {
@@ -438,6 +439,8 @@ body {
     font-size: 1.5rem;
     font-weight: 700;
     color: #2d3748;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
 
@@ -501,8 +504,40 @@ body {
 }
 
 .chart-container canvas {
-    max-height: 300px;
     width: 100% !important;
+}
+
+.chart-subtitle {
+    display: block;
+    font-size: 0.85rem;
+    color: #a0aec0;
+    font-style: italic;
+    text-align: center;
+    margin-bottom: 1rem;
+    margin-top: -0.5rem;
+}
+
+.chart-full-width {
+    grid-column: 1 / -1;
+}
+
+.charts-grid-2col {
+    grid-template-columns: repeat(2, 1fr) !important;
+}
+
+.success-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 150px;
+    color: #22543d;
+    background-color: #f0fdf4;
+    border: 1px dashed #86efac;
+    border-radius: 6px;
+    padding: 1.5rem;
+    text-align: center;
+    font-weight: 500;
 }
 
 
@@ -526,6 +561,105 @@ body {
     color: #667eea;
 }
 
+
+/* ============================================
+   TARGET COLUMN SUGGESTIONS
+   ============================================ */
+
+.suggestion-container {
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
+    background-color: #f9fafb;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}
+
+.suggestion-label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4a5568;
+    margin-bottom: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.suggestion-loading {
+    display: block;
+    font-size: 0.85rem;
+    color: #718096;
+    font-style: italic;
+    animation: pulse-text 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-text {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.suggestion-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: 2px solid #667eea;
+    border-radius: 999px;
+    background: white;
+    color: #4a5568;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.suggestion-chip:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    border-color: #764ba2;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.2);
+}
+
+.suggestion-chip.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: transparent;
+    box-shadow: 0 3px 10px rgba(102, 126, 234, 0.35);
+}
+
+.suggestion-chip.active .suggestion-type-badge {
+    background: rgba(255, 255, 255, 0.25);
+    color: white;
+}
+
+.suggestion-chip-name {
+    font-weight: 600;
+}
+
+.suggestion-type-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.badge-classification {
+    background: rgba(118, 75, 162, 0.12);
+    color: #764ba2;
+}
+
+.badge-regression {
+    background: rgba(56, 178, 172, 0.12);
+    color: #2c7a7b;
+}
 
 .hidden {
     display: none !important;

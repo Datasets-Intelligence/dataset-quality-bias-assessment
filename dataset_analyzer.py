@@ -55,30 +55,47 @@ class DatasetAnalyzer:
             df = pd.read_csv(file_path)
             if target_column not in df.columns:
                 raise ValueError(f"Target column '{target_column}' not found")
+            
+            # Drop rows where target is missing - models cannot learn from them
+            initial_len = len(df)
+            df = df.dropna(subset=[target_column])
+            if len(df) < initial_len:
+                result["warnings"].append(f"Dropped {initial_len - len(df)} rows with missing target values")
+            
+            if len(df) < 10:
+                raise ValueError("Insufficient data after cleaning (less than 10 rows)")
 
             result["validation_status"] = "passed"
 
-            # Step 3: Stats
+            # Step 3: Stats (Safe)
             result["dataset_statistics"] = self._get_dataset_statistics(df, target_column)
 
-            # Step 4: Quality
+            # Step 4: Quality (Safe)
             result["quality_issues"] = self._analyze_quality(df, target_column)
 
-            # Step 5: Model
-            model_results = self._evaluate_baseline_model(df, target_column)
-            result["model_metrics"] = model_results["metrics"]
+            # --- MODEL-DEPENDENT PART ---
+            model_results = {}
+            pred_visual = {}
+            try:
+                model_results = self._evaluate_baseline_model(df, target_column)
+                result["model_metrics"] = model_results.get("metrics", {})
+                result["bias_findings"] = self._analyze_bias(df, target_column, model_results)
+                pred_visual = self._prediction_visual(model_results)
+            except Exception as e:
+                # Capture model errors as warnings so we don't block the rest of UI
+                result["warnings"].append(f"Baseline model analysis failed: {str(e)}")
+                result["model_metrics"] = {}
+                result["bias_findings"] = {"bias_analysis_performed": False, "reason": "Model evaluation error"}
+                pred_visual = {}
 
-            # Step 6: Visual data (✅ CORRECT PLACE)
+            # Step 6: Visual data (Now safe because pred_visual is handled)
             result["visual_data"] = {
                 "missing_values": self._missing_values_visual(df),
                 "target_distribution": self._target_distribution_visual(df[target_column]),
                 "feature_distributions": self._feature_distributions_visual(df, target_column),
-                "prediction_vs_actual": self._prediction_visual(model_results),
+                "prediction_vs_actual": pred_visual,
                 "total_rows": len(df),
             }
-
-            # Step 7: Bias
-            result["bias_findings"] = self._analyze_bias(df, target_column, model_results)
 
             # Step 8: Recommendations
             result["recommendations"] = self._generate_recommendations(
@@ -89,7 +106,11 @@ class DatasetAnalyzer:
 
         except Exception as e:
             result["validation_status"] = "error"
-            result["warnings"].append(str(e))
+            # Extract clean error message avoiding internal list representations
+            err_msg = str(e)
+            if "least populated class" in err_msg.lower():
+                err_msg = "One or more classes have too few samples (only 1) for the model to train safely."
+            result["warnings"].append(err_msg)
 
         return result
 
@@ -404,45 +425,81 @@ class DatasetAnalyzer:
         }
 
     def _evaluate_baseline_model(self, df: pd.DataFrame, target_column: str) -> Dict[str, Any]:
-        """
-        Train and evaluate a baseline model.
-        """
+        
+        TRAINING_SAMPLE_CAP = 20000
+        HIGH_CARDINALITY_THRESHOLD = 50
+
         X = df.drop(columns=[target_column])
         y = df[target_column]
 
-        # Preprocess features consistently
-        X_processed, encoders, imputers, cat_cols, num_cols = self._encode_and_impute_features(X)
+        # Drop high-cardinality categorical columns before encoding
+        # They become meaningless integers and slow down training
+        high_card_cols = [
+            col for col in X.select_dtypes(include=['object', 'category']).columns
+            if X[col].nunique() > HIGH_CARDINALITY_THRESHOLD
+        ]
+        if high_card_cols:
+            X = X.drop(columns=high_card_cols)
+
+        # Preprocess
+        X_processed, encoders, imputers, cat_cols, num_cols = \
+            self._encode_and_impute_features(X)
 
         # Determine problem type
-        is_classification = (not pd.api.types.is_numeric_dtype(y)) or (y.nunique() <= 10)
+        is_classification = (
+            not pd.api.types.is_numeric_dtype(y)
+        ) or (y.nunique() <= 10)
 
         if is_classification:
             le_target = LabelEncoder()
             y_encoded = le_target.fit_transform(y.astype(str))
-            model = DecisionTreeClassifier(max_depth=5, random_state=42) if len(df) < 1000 else LogisticRegression(max_iter=1000, random_state=42)
+            # Always DecisionTree for classification - fast and sufficient for diagnostics
+            model = DecisionTreeClassifier(max_depth=7, random_state=42)
         else:
             y_encoded = y
             model = DecisionTreeRegressor(max_depth=8, random_state=42)
 
-        # Split data
-        stratify_arg = y_encoded if is_classification else None
+        # Split
+        stratify_arg = None
+        if is_classification:
+            # Only stratify if we have at least 2 samples per class for both train and test (simplified check)
+            counts = pd.Series(y_encoded).value_counts()
+            if len(counts) > 1 and counts.min() >= 2:
+                stratify_arg = y_encoded
+
         X_train, X_test, y_train, y_test = train_test_split(
-            X_processed, y_encoded, test_size=0.2, random_state=42, stratify=stratify_arg
+            X_processed, y_encoded,
+            test_size=0.2, random_state=42, stratify=stratify_arg
         )
 
-        # Train model
-        model.fit(X_train, y_train)
+        # Cap training samples - diagnostic tool does not need full dataset
+        if len(X_train) > TRAINING_SAMPLE_CAP:
+            rng = np.random.RandomState(42)
+            idx = rng.choice(len(X_train), TRAINING_SAMPLE_CAP, replace=False)
+            X_train_fit = X_train.iloc[idx]
+            # Use iloc for y_train too (it's a series if regression, array if classification)
+            # But iloc is safer for index alignment
+            if hasattr(y_train, 'iloc'):
+                y_train_fit = y_train.iloc[idx]
+            else:
+                y_train_fit = y_train[idx]
+        else:
+            X_train_fit = X_train
+            y_train_fit = y_train
 
-        # Evaluate
-        train_pred = model.predict(X_train)
+        # Train
+        model.fit(X_train_fit, y_train_fit)
+
+        # Evaluate on full train sample and full test set
+        train_pred = model.predict(X_train_fit)
         test_pred = model.predict(X_test)
 
         if is_classification:
-            train_score = accuracy_score(y_train, train_pred)
+            train_score = accuracy_score(y_train_fit, train_pred)
             test_score = accuracy_score(y_test, test_pred)
             metric_name = 'accuracy'
         else:
-            train_score = r2_score(y_train, train_pred)
+            train_score = r2_score(y_train_fit, train_pred)
             test_score = r2_score(y_test, test_pred)
             metric_name = 'r2'
 
@@ -452,6 +509,7 @@ class DatasetAnalyzer:
             'y_test': y_test,
             'y_pred': test_pred,
             'test_indices': X_test.index,
+            'dropped_high_cardinality': high_card_cols,
             'target_encoder': le_target if is_classification else None,
             'metrics': {
                 'problem_type': 'classification' if is_classification else 'regression',
@@ -459,7 +517,10 @@ class DatasetAnalyzer:
                 'metric': metric_name,
                 'train_score': round(train_score, 4),
                 'test_score': round(test_score, 4),
-                'train_test_gap': round(train_score - test_score, 4)
+                'train_test_gap': round(train_score - test_score, 4),
+                'training_sample_size': len(X_train_fit),
+                'note': f'Trained on {len(X_train_fit)} of {len(X_train)} training samples for performance'
+                        if len(X_train) > TRAINING_SAMPLE_CAP else None
             }
         }
     
@@ -593,8 +654,8 @@ class DatasetAnalyzer:
             )
         
         # Class imbalance
-        class_dist = quality_issues['class_distribution']
-        if class_dist.get('is_imbalanced'):
+        class_dist = quality_issues.get('class_distribution', {})
+        if class_dist and class_dist.get('is_imbalanced'):
             recommendations.append(
                 f"Address class imbalance: minority class represents only "
                 f"{class_dist['minority_class_ratio']:.1%} of data. "

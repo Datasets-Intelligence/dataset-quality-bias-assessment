@@ -5,12 +5,22 @@ let appState = {
     analysisResults: null,        // Complete results from backend
     isUploading: false,           // Upload in progress
     isAnalyzing: false,            // Analysis in progress
-    charts: {}                    // Chart.js instances
+    charts: {},                   // Chart.js instances
+    activeTab: 1,                 // Currently active tab
+    analysisComplete: false,      // Has analysis finished successfully
+    tabsUnlocked: false,          // Are result tabs accessible
+    chartsRendered: false         // Has Tab 3 rendered charts yet
 };
 
 
 
 const elements = {
+    // Tabs
+    tabButtons: document.querySelectorAll('.tab-btn'),
+    tabContents: document.querySelectorAll('.tab-content'),
+    summaryStrip: document.getElementById('summary-strip'),
+    biasBannerContainer: document.getElementById('bias-banner-container'),
+
     // File upload
     fileInput: document.getElementById('file-input'),
     fileButton: document.getElementById('file-button'),
@@ -27,9 +37,6 @@ const elements = {
     errorContainer: document.getElementById('error-container'),
     errorMessage: document.getElementById('error-message'),
     errorClose: document.getElementById('error-close'),
-    
-    // Results section
-    resultsSection: document.getElementById('results-section'),
     
     // Statistics
     statRecords: document.getElementById('stat-records'),
@@ -63,6 +70,13 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.fileInput.addEventListener('change', handleFileChange);
     elements.runButton.addEventListener('click', handleRunAnalysis);
     elements.errorClose.addEventListener('click', hideError);
+
+    // Tab Listeners
+    elements.tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            switchTab(parseInt(btn.getAttribute('data-tab')));
+        });
+    });
 
     // Initialize Chart.js defaults
     if (window.Chart) {
@@ -112,6 +126,8 @@ function handleFileChange() {
  */
 async function uploadDataset(file) {
     hideError();
+    lockTabs();
+    clearSummaryStrip();
     setLoadingState('uploading', true);
     
     const formData = new FormData();
@@ -169,8 +185,12 @@ function resetUploadUI() {
     elements.uploadStatus.className = 'upload-status hidden';
     elements.targetInput.disabled = true;
     appState.uploadedFile = null;
+    appState.analysisResults = null;
+    appState.analysisComplete = false;
     updateRunButtonState();
     hideSuggestions();
+    lockTabs();
+    clearSummaryStrip();
 }
 
 
@@ -229,6 +249,12 @@ async function runAnalysis() {
             throw new Error(data.error || 'Analysis failed');
         }
         
+        // Check for internal analysis errors
+        if (data.validation_status === 'failed' || data.validation_status === 'error') {
+            const msg = data.warnings && data.warnings.length > 0 ? data.warnings[0] : 'Analysis failed internally';
+            throw new Error(msg);
+        }
+        
         // Store results
         appState.analysisResults = data;
         
@@ -247,43 +273,51 @@ async function runAnalysis() {
  * Render all analysis results into the UI
  */
 function renderResults(results) {
-    // Show results section
-    elements.resultsSection.classList.remove('hidden');
-    
-    // Scroll to results
-    setTimeout(() => {
-        elements.resultsSection.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
+    appState.analysisComplete = true;
+    appState.analysisResults = results;
+    appState.chartsRendered = false;
     
     // Render each section
     renderStatistics(results.dataset_statistics);
     renderQualityIssues(results.quality_issues);
     renderModelMetrics(results.model_metrics);
-    // Add visualization rendering
-    const totalRows = results.dataset_statistics ? results.dataset_statistics.total_rows : 0;
-    renderVisualizations(results.visual_data, totalRows); 
+    // Visualizations mapped in Tab 3 switch, not here
     renderBiasAnalysis(results.bias_findings);
     renderRecommendations(results.recommendations);
+
+    unlockTabs();
+    updateTabBadges(results);
+    showSummaryStrip(results);
+    switchTab(2);
 }
 
 /**
  * Render dataset statistics cards
  */
 function renderStatistics(stats) {
-    if (!stats) return;
+    if (!stats || stats.total_rows === undefined) {
+        if (elements.statRecords) elements.statRecords.textContent = '—';
+        if (elements.statFeatures) elements.statFeatures.textContent = '—';
+        if (elements.statCompleteness) elements.statCompleteness.textContent = '—';
+        return;
+    }
     
     // Calculate completeness percentage
     let completenessPercent = 100;
-    if (stats.total_rows > 0) {
-        const qualityIssues = appState.analysisResults.quality_issues;
-        const missingCells = qualityIssues.missing_values.total_missing_cells || 0;
-        const totalCells = stats.total_rows * stats.total_columns;
-        completenessPercent = Math.round(((totalCells - missingCells) / totalCells) * 100);
-    }
+    try {
+        if (stats.total_rows > 0) {
+            const qualityIssues = appState.analysisResults.quality_issues;
+            if (qualityIssues && qualityIssues.missing_values) {
+                const missingCells = qualityIssues.missing_values.total_missing_cells || 0;
+                const totalCells = stats.total_rows * stats.total_columns;
+                completenessPercent = Math.round(((totalCells - missingCells) / totalCells) * 100);
+            }
+        }
+    } catch (e) { console.warn("Error calculating completeness", e); }
     
-    elements.statRecords.textContent = stats.total_rows.toLocaleString();
-    elements.statFeatures.textContent = stats.feature_count;
-    elements.statCompleteness.textContent = `${completenessPercent}%`;
+    if (elements.statRecords) elements.statRecords.textContent = stats.total_rows.toLocaleString();
+    if (elements.statFeatures) elements.statFeatures.textContent = stats.feature_count;
+    if (elements.statCompleteness) elements.statCompleteness.textContent = `${completenessPercent}%`;
 }
 
 /**
@@ -881,11 +915,26 @@ function renderFeatureDistributionsChart(featureData, animate) {
 function renderBiasAnalysis(bias) {
     if (!bias || !bias.bias_analysis_performed || !bias.bias_metrics || bias.bias_metrics.length === 0) {
         elements.biasSection.classList.add('hidden');
+        if (elements.biasBannerContainer) {
+            elements.biasBannerContainer.innerHTML = `<div class="bias-banner bias-banner-info">No sensitive attributes (gender, age, race, etc.) were detected in this dataset. Bias analysis was skipped.</div>`;
+        }
         return;
     }
     
-    // Show bias section
     elements.biasSection.classList.remove('hidden');
+
+    let disparityFound = false;
+    if (bias.bias_metrics) {
+        disparityFound = bias.bias_metrics.some(m => m.performance_disparity);
+    }
+    
+    if (elements.biasBannerContainer) {
+        if (disparityFound) {
+            elements.biasBannerContainer.innerHTML = `<div class="bias-banner bias-banner-warning">⚠ Performance disparity detected. Review highlighted groups below.</div>`;
+        } else {
+            elements.biasBannerContainer.innerHTML = `<div class="bias-banner bias-banner-success">✓ No performance disparity detected across groups.</div>`;
+        }
+    }
     
     // Build table
     let tableHTML = `
@@ -903,16 +952,18 @@ function renderBiasAnalysis(bias) {
     `;
     
     for (const biasMetric of bias.bias_metrics) {
-        const disparity = biasMetric.performance_disparity ? 'Yes' : 'No';
+        const isDisparity = biasMetric.performance_disparity;
+        const rowClassStr = isDisparity ? ' class="bias-row-disparity"' : '';
+        const disparityStr = isDisparity ? 'Yes' : 'No';
         
         for (const group of biasMetric.groups) {
             tableHTML += `
-                <tr>
+                <tr${rowClassStr}>
                     <td>${biasMetric.attribute}</td>
                     <td>${group.group}</td>
                     <td>${group.size}</td>
                     <td>${(group.accuracy).toFixed(4)}</td>
-                    <td>${disparity}</td>
+                    <td>${disparityStr}</td>
                 </tr>
             `;
         }
@@ -930,6 +981,7 @@ function renderBiasAnalysis(bias) {
  * Render recommendations
  */
 function renderRecommendations(recs) {
+    if (!elements.recommendations) return;
     if (!recs || recs.length === 0) {
         elements.recommendations.innerHTML = '<p class="placeholder">No specific recommendations at this time</p>';
         return;
@@ -1133,3 +1185,155 @@ window.addEventListener('unhandledrejection', (event) => {
 window.addEventListener('error', (event) => {
     console.error('JavaScript error:', event.error);
 });
+
+
+// ============================================
+// TAB LOGIC
+// ============================================
+function switchTab(tabNumber) {
+    if (!appState.tabsUnlocked && tabNumber !== 1) return;
+    appState.activeTab = tabNumber;
+
+    elements.tabButtons.forEach(btn => {
+        const t = parseInt(btn.getAttribute('data-tab'));
+        if (t === tabNumber) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    elements.tabContents.forEach(content => {
+        const t = parseInt(content.id.replace('tab-', ''));
+        if (t === tabNumber) {
+            content.style.display = 'block';
+            content.classList.add('active');
+        } else {
+            content.style.display = 'none';
+            content.classList.remove('active');
+        }
+    });
+
+    if (tabNumber === 3 && !appState.chartsRendered && appState.analysisResults) {
+        const visualData = appState.analysisResults.visual_data;
+        const totalRows = appState.analysisResults.dataset_statistics ? appState.analysisResults.dataset_statistics.total_rows : 0;
+        renderVisualizations(visualData, totalRows);
+        appState.chartsRendered = true;
+    }
+}
+
+function unlockTabs() {
+    appState.tabsUnlocked = true;
+    elements.tabButtons.forEach(btn => {
+        const t = parseInt(btn.getAttribute('data-tab'));
+        if (t !== 1) {
+            btn.classList.remove('locked');
+            btn.textContent = btn.textContent.replace('🔒 ', '');
+        }
+    });
+}
+
+function lockTabs() {
+    appState.tabsUnlocked = false;
+    appState.chartsRendered = false;
+    destroyCharts();
+    
+    elements.tabButtons.forEach(btn => {
+        const t = parseInt(btn.getAttribute('data-tab'));
+        if (t !== 1) {
+            btn.classList.add('locked');
+            if (!btn.textContent.includes('🔒')) {
+                btn.textContent = '🔒 ' + btn.textContent;
+            }
+            const badge = btn.querySelector('.tab-badge, .dot-indicator');
+            if (badge) badge.remove();
+        }
+    });
+
+    if (appState.activeTab !== 1) switchTab(1);
+    
+    // Clear content html to match UX rules
+    elements.qualityIssues.innerHTML = '<p class="placeholder">No issues detected</p>';
+    elements.recommendations.innerHTML = '<p class="placeholder">Recommendations will appear here</p>';
+    elements.modelMetrics.innerHTML = '<p class="placeholder">Model evaluation metrics will appear here</p>';
+    elements.biasTable.innerHTML = '<p class="placeholder">Bias analysis table will appear here</p>';
+    if (elements.biasBannerContainer) elements.biasBannerContainer.innerHTML = '';
+    
+    document.getElementById('stat-records').textContent = '—';
+    document.getElementById('stat-features').textContent = '—';
+    document.getElementById('stat-completeness').textContent = '—';
+}
+
+function updateTabBadges(results) {
+    if (!results) return;
+    let issueCount = 0;
+    const qi = results.quality_issues;
+    if (qi) {
+        if (qi.missing_values && qi.missing_values.has_missing) issueCount++;
+        if (qi.duplicates && qi.duplicates.has_duplicates) issueCount++;
+        if (qi.class_distribution && qi.class_distribution.is_imbalanced) issueCount++;
+        if (qi.outliers && qi.outliers.has_outliers) issueCount++;
+        if (qi.potential_leakage && qi.potential_leakage.potential_leakage_detected) issueCount++;
+    }
+    
+    const tab2Btn = document.querySelector('.tab-btn[data-tab="2"]');
+    if (tab2Btn) {
+        const oldBadge2 = tab2Btn.querySelector('.tab-badge');
+        if (oldBadge2) oldBadge2.remove();
+        
+        const badge2 = document.createElement('span');
+        badge2.className = `tab-badge ${issueCount > 0 ? 'badge-error' : 'badge-success'}`;
+        badge2.textContent = issueCount > 0 ? `${issueCount} issues` : '✓ clean';
+        tab2Btn.appendChild(badge2);
+    }
+    
+    const tab4Btn = document.querySelector('.tab-btn[data-tab="4"]');
+    if (tab4Btn) {
+        const oldDot = tab4Btn.querySelector('.dot-indicator');
+        if (oldDot) oldDot.remove();
+        
+        const bias = results.bias_findings;
+        if (bias && bias.bias_analysis_performed) {
+            let disparityFound = false;
+            if (bias.bias_metrics) {
+                disparityFound = bias.bias_metrics.some(m => m.performance_disparity);
+            }
+            const dot = document.createElement('span');
+            dot.className = `dot-indicator ${disparityFound ? 'dot-warning' : 'dot-success'}`;
+            tab4Btn.appendChild(dot);
+        }
+    }
+}
+
+function showSummaryStrip(results) {
+    if (!results || !elements.summaryStrip) return;
+    const stats = results.dataset_statistics;
+    const qi = results.quality_issues;
+    if (!stats) return;
+    
+    let completenessPercent = 100;
+    if (stats.total_rows > 0 && qi && qi.missing_values) {
+        const missingCells = qi.missing_values.total_missing_cells || 0;
+        const totalCells = stats.total_rows * stats.total_columns;
+        completenessPercent = Math.round(((totalCells - missingCells) / totalCells) * 100);
+    }
+    
+    let issueCount = 0;
+    if (qi) {
+        if (qi.missing_values && qi.missing_values.has_missing) issueCount++;
+        if (qi.duplicates && qi.duplicates.has_duplicates) issueCount++;
+        if (qi.class_distribution && qi.class_distribution.is_imbalanced) issueCount++;
+        if (qi.outliers && qi.outliers.has_outliers) issueCount++;
+        if (qi.potential_leakage && qi.potential_leakage.potential_leakage_detected) issueCount++;
+    }
+    
+    elements.summaryStrip.innerHTML = `<span>✓ Analysis Complete — ${stats.total_rows.toLocaleString()} records · ${stats.feature_count} features · ${completenessPercent}% complete · ${issueCount} issues found</span><button onclick="switchTab(2)" style="background:transparent;border:1px solid currentColor;color:inherit;padding:0.4rem 1rem;border-radius:4px;cursor:pointer;font-weight:bold;">View Report →</button>`;
+    elements.summaryStrip.classList.remove('hidden');
+}
+
+function clearSummaryStrip() {
+    if (elements.summaryStrip) {
+        elements.summaryStrip.innerHTML = '';
+        elements.summaryStrip.classList.add('hidden');
+    }
+}

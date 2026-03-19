@@ -16,170 +16,124 @@
         </div>
     </header>
 
+    <nav class="tab-bar">
+        <button class="tab-btn active" data-tab="1">Upload</button>
+        <button class="tab-btn locked" data-tab="2">🔒 Overview</button>
+        <button class="tab-btn locked" data-tab="3">🔒 Model & Charts</button>
+        <button class="tab-btn locked" data-tab="4">🔒 Bias Analysis</button>
+    </nav>
+
     <!-- MAIN CONTENT -->
     <main class="main-container">
-        
-        <!-- ANALYSIS CONFIGURATION SECTION -->
-        <section class="config-section">
-            <div class="section-header">
-                <h2>Analysis Configuration</h2>
-            </div>
-            
-            <div class="config-content">
-                
-                <!-- Upload Dataset Block -->
-                <div class="upload-block">
-                    <label for="file-input" class="upload-label">Upload Dataset (CSV only)</label>
-                    <div class="file-input-wrapper">
-                        <input 
-                            type="file" 
-                            id="file-input" 
-                            accept=".csv" 
-                            class="file-input"
-                        >
-                        <button id="file-button" class="file-button">Choose File</button>
-                        <span id="file-name" class="file-name">No file selected</span>
-                    </div>
-                    <div id="upload-status" class="upload-status hidden"></div>
+
+        <!-- TAB 1: UPLOAD & CONFIG -->
+        <div class="tab-content active" id="tab-1">
+            <section class="config-section">
+                <div class="section-header">
+                    <h2>Analysis Configuration</h2>
                 </div>
-
-                <!-- Target Variable Input -->
-                <div class="target-block">
-                    <label for="target-input" class="target-label">Target Variable</label>
-                    <input 
-                        type="text" 
-                        id="target-input" 
-                        class="target-input" 
-                        placeholder="Enter the target column name"
-                        disabled
-                    >
-                    <small class="helper-text">The column to predict or analyze</small>
-
-                    <!-- Target Column Suggestions -->
-                    <div id="suggestion-container" class="suggestion-container hidden">
-                        <span class="suggestion-label">Suggested Target Columns</span>
-                        <span id="suggestion-loading" class="suggestion-loading hidden">Detecting columns...</span>
-                        <div id="suggestion-chips" class="suggestion-chips"></div>
+                <div class="config-content">
+                    <div class="upload-block">
+                        <label for="file-input" class="upload-label">Upload Dataset (CSV only)</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="file-input" accept=".csv" class="file-input">
+                            <button id="file-button" class="file-button">Choose File</button>
+                            <span id="file-name" class="file-name">No file selected</span>
+                        </div>
+                        <div id="upload-status" class="upload-status hidden"></div>
+                    </div>
+                    <div class="target-block">
+                        <label for="target-input" class="target-label">Target Variable</label>
+                        <input type="text" id="target-input" class="target-input" placeholder="Enter the target column name" disabled>
+                        <small class="helper-text">The column to predict or analyze</small>
+                        <div id="suggestion-container" class="suggestion-container hidden">
+                            <span class="suggestion-label">Suggested Target Columns</span>
+                            <span id="suggestion-loading" class="suggestion-loading hidden">Detecting columns...</span>
+                            <div id="suggestion-chips" class="suggestion-chips"></div>
+                        </div>
+                    </div>
+                    <div class="button-block">
+                        <button id="run-button" class="run-button" disabled>Run Analysis</button>
                     </div>
                 </div>
+            </section>
 
-                <!-- Run Analysis Button -->
-                <div class="button-block">
-                    <button id="run-button" class="run-button" disabled>Run Analysis</button>
+            <!-- Error Block shifted into Tab 1 -->
+            <div id="error-container" class="error-container hidden">
+                <div class="error-box">
+                    <div class="error-header">
+                        <span class="error-icon">⚠</span>
+                        <span class="error-title">Error</span>
+                        <button id="error-close" class="error-close">&times;</button>
+                    </div>
+                    <div id="error-message" class="error-message"></div>
                 </div>
-
             </div>
-        </section>
 
-        <!-- ERROR MESSAGE BLOCK (Initially Hidden) -->
-        <div id="error-container" class="error-container hidden">
-            <div class="error-box">
-                <div class="error-header">
-                    <span class="error-icon">⚠</span>
-                    <span class="error-title">Error</span>
-                    <button id="error-close" class="error-close">&times;</button>
+            <!-- Summary Strip on Tab 1 -->
+            <div id="summary-strip" class="summary-strip hidden"></div>
+        </div>
+
+        <!-- TAB 2: OVERVIEW -->
+        <div class="tab-content" id="tab-2" style="display:none">
+            <div class="statistics-section">
+                <h3 class="subsection-title">Dataset Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-label">Total Records</div><div id="stat-records" class="stat-value">—</div></div>
+                    <div class="stat-card"><div class="stat-label">Feature Count</div><div id="stat-features" class="stat-value">—</div></div>
+                    <div class="stat-card"><div class="stat-label">Completeness</div><div id="stat-completeness" class="stat-value">—</div></div>
                 </div>
-                <div id="error-message" class="error-message"></div>
+            </div>
+            <div class="quality-section">
+                <h3 class="subsection-title">Detected Quality Issues</h3>
+                <div id="quality-issues" class="issues-list"><p class="placeholder">No issues detected</p></div>
+            </div>
+            <div class="recommendations-section">
+                <h3 class="subsection-title">Recommendations</h3>
+                <div id="recommendations" class="recommendations-list"><p class="placeholder">Recommendations will appear here</p></div>
             </div>
         </div>
 
-        <!-- RESULTS SECTION (Initially Hidden) -->
-        <section id="results-section" class="results-section hidden">
-            <div class="section-header">
-                <h2>Analysis Results</h2>
+        <!-- TAB 3: MODEL & CHARTS -->
+        <div class="tab-content" id="tab-3" style="display:none">
+            <div class="evaluation-section">
+                <h3 class="subsection-title">Baseline Model Evaluation</h3>
+                <div id="model-metrics" class="metrics-box"><p class="placeholder">Model evaluation metrics will appear here</p></div>
             </div>
-
-            <div class="results-content">
-                
-                <!-- Dataset Statistics Summary Cards -->
-                <div class="statistics-section">
-                    <h3 class="subsection-title">Dataset Statistics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-label">Total Records</div>
-                            <div id="stat-records" class="stat-value">—</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Feature Count</div>
-                            <div id="stat-features" class="stat-value">—</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Completeness</div>
-                            <div id="stat-completeness" class="stat-value">—</div>
-                        </div>
+            <div id="visualizations-section" class="visualizations-section">
+                <h3 class="subsection-title">Data Visualizations</h3>
+                <div class="charts-grid" id="main-charts-grid">
+                    <div class="chart-container" id="missing-values-container">
+                        <h4>Missing Values</h4>
+                        <div class="chart-subtitle">Columns with missing data</div>
+                        <div id="missing-values-wrapper" style="position: relative; width: 100%;"><canvas id="missing-values-chart"></canvas></div>
+                    </div>
+                    <div class="chart-container" id="target-dist-container">
+                        <h4>Target Distribution</h4>
+                        <div class="chart-subtitle">How the target classes are distributed</div>
+                        <div id="target-dist-wrapper" style="position: relative; width: 100%;"><canvas id="target-dist-chart"></canvas></div>
+                    </div>
+                    <div class="chart-container" id="pred-actual-container">
+                        <h4 id="pred-actual-title">Prediction vs Actual</h4>
+                        <div class="chart-subtitle" id="pred-actual-subtitle">Each dot is one test sample. Dots on the line = perfect prediction</div>
+                        <div id="pred-actual-wrapper" style="position: relative; width: 100%;"><canvas id="pred-actual-chart"></canvas></div>
                     </div>
                 </div>
-
-                <!-- Quality Issues List -->
-                <div class="quality-section">
-                    <h3 class="subsection-title">Detected Quality Issues</h3>
-                    <div id="quality-issues" class="issues-list">
-                        <p class="placeholder">No issues detected</p>
-                    </div>
+                <div id="feature-distributions-section" class="feature-distributions-section hidden" style="margin-top: 2.5rem;">
+                    <h3 class="subsection-title" style="margin-bottom: 1.5rem; font-size: 1.15rem; border-bottom: none;">Feature Distributions</h3>
+                    <div class="charts-grid" id="feature-charts-grid"></div>
                 </div>
-
-                <!-- Baseline Evaluation Metrics -->
-                <div class="evaluation-section">
-                    <h3 class="subsection-title">Baseline Model Evaluation</h3>
-                    <div id="model-metrics" class="metrics-box">
-                        <p class="placeholder">Model evaluation metrics will appear here</p>
-                    </div>
-                </div>
-
-                <!-- Bias Analysis Table (Conditional) -->
-                <div id="bias-section" class="bias-section hidden">
-                    <h3 class="subsection-title">Bias Analysis</h3>
-                    <div id="bias-table" class="bias-table">
-                        <p class="placeholder">Bias analysis table will appear here</p>
-                    </div>
-                </div>
-
-                <!-- Visualizations Section -->
-                <div id="visualizations-section" class="visualizations-section">
-                    <h3 class="subsection-title">Data Visualizations</h3>
-                    <div class="charts-grid" id="main-charts-grid">
-                        <div class="chart-container" id="missing-values-container">
-                            <h4>Missing Values</h4>
-                            <div class="chart-subtitle">Columns with missing data</div>
-                            <div id="missing-values-wrapper" style="position: relative; width: 100%;">
-                                <canvas id="missing-values-chart"></canvas>
-                            </div>
-                        </div>
-                        <div class="chart-container" id="target-dist-container">
-                            <h4>Target Distribution</h4>
-                            <div class="chart-subtitle">How the target classes are distributed</div>
-                            <div id="target-dist-wrapper" style="position: relative; width: 100%;">
-                                <canvas id="target-dist-chart"></canvas>
-                            </div>
-                        </div>
-                        <div class="chart-container" id="pred-actual-container">
-                            <h4 id="pred-actual-title">Prediction vs Actual</h4>
-                            <div class="chart-subtitle" id="pred-actual-subtitle">Each dot is one test sample. Dots on the line = perfect prediction</div>
-                            <div id="pred-actual-wrapper" style="position: relative; width: 100%;">
-                                <canvas id="pred-actual-chart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Feature Distributions Sub-section -->
-                    <div id="feature-distributions-section" class="feature-distributions-section hidden" style="margin-top: 2.5rem;">
-                        <h3 class="subsection-title" style="margin-bottom: 1.5rem; font-size: 1.15rem; border-bottom: none;">Feature Distributions</h3>
-                        <div class="charts-grid" id="feature-charts-grid">
-                            <!-- Feature charts injected here by JS -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Recommendations List -->
-                <div class="recommendations-section">
-                    <h3 class="subsection-title">Recommendations</h3>
-                    <div id="recommendations" class="recommendations-list">
-                        <p class="placeholder">Recommendations will appear here</p>
-                    </div>
-                </div>
-
             </div>
-        </section>
+        </div>
+
+        <!-- TAB 4: BIAS ANALYSIS -->
+        <div class="tab-content" id="tab-4" style="display:none">
+            <div id="bias-banner-container"></div>
+            <div id="bias-section" class="bias-section hidden">
+                <h3 class="subsection-title">Bias Analysis</h3>
+                <div id="bias-table" class="bias-table"><p class="placeholder">Bias analysis table will appear here</p></div>
+            </div>
+        </div>
 
     </main>
 

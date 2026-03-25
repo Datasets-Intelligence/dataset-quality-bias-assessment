@@ -308,9 +308,14 @@ class DatasetAnalyzer:
                     'percentage': round((count / total) * 100, 2)
                 })
             
-            # Check for imbalance
+            # Check for imbalance using adaptive threshold:
+            # A dataset with N classes is only imbalanced if the minority class
+            # is below 50% of what uniform distribution would predict (1/N).
+            # This prevents incorrectly flagging every multi-class dataset.
             min_class_ratio = value_counts.min() / total
-            is_imbalanced = bool(min_class_ratio < self.imbalance_ratio)
+            num_classes_local = len(value_counts)
+            adaptive_threshold = 0.5 * (1.0 / num_classes_local)
+            is_imbalanced = bool(min_class_ratio < adaptive_threshold)
             
             return {
                 'is_classification': True,
@@ -706,6 +711,104 @@ def analyze_dataset(file_path: str, target_column: str, **kwargs) -> Dict[str, A
    
     analyzer = DatasetAnalyzer(**kwargs)
     return analyzer.analyze(file_path, target_column)
+
+
+def clean_dataset(file_path: str) -> Dict[str, Any]:
+    """
+    Apply safe, reversible fixes to a CSV dataset:
+      1. Remove duplicate rows
+      2. Impute missing values (median for numeric, mode for categorical)
+      3. Cap outliers at IQR bounds (not removal — capping is reversible)
+
+    Returns:
+        {
+            "cleaned_df": pd.DataFrame,       # The improved dataset
+            "change_log": List[str],           # Human-readable list of changes
+            "original_stats": dict,            # Before stats
+            "cleaned_stats": dict,             # After stats
+        }
+    """
+    df = pd.read_csv(file_path)
+    original_rows = len(df)
+    original_missing = int(df.isnull().sum().sum())
+    change_log = []
+
+    # ── 1. Remove duplicates ──────────────────────────────────────────
+    dup_count = int(df.duplicated().sum())
+    if dup_count > 0:
+        df = df.drop_duplicates().reset_index(drop=True)
+        change_log.append(f"Removed {dup_count:,} duplicate rows.")
+
+    # ── 2. Impute missing values ──────────────────────────────────────
+    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+
+    total_imputed = 0
+
+    for col in num_cols:
+        missing = int(df[col].isnull().sum())
+        if missing > 0:
+            median_val = df[col].median()
+            df[col] = df[col].fillna(median_val)
+            total_imputed += missing
+            change_log.append(
+                f"Imputed {missing:,} missing values in '{col}' using median ({median_val:.4g})."
+            )
+
+    for col in cat_cols:
+        missing = int(df[col].isnull().sum())
+        if missing > 0:
+            mode_val = df[col].mode()
+            if len(mode_val) > 0:
+                df[col] = df[col].fillna(mode_val[0])
+                total_imputed += missing
+                change_log.append(
+                    f"Imputed {missing:,} missing values in '{col}' using mode ('{mode_val[0]}')."
+                )
+
+    # ── 3. Cap outliers at IQR bounds ─────────────────────────────────
+    total_capped = 0
+    for col in num_cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        if IQR == 0:
+            continue
+        lower = Q1 - 1.5 * IQR
+        upper = Q3 + 1.5 * IQR
+        n_below = int((df[col] < lower).sum())
+        n_above = int((df[col] > upper).sum())
+        n_capped = n_below + n_above
+        if n_capped > 0:
+            df[col] = df[col].clip(lower=lower, upper=upper)
+            total_capped += n_capped
+            change_log.append(
+                f"Capped {n_capped:,} outliers in '{col}' "
+                f"(lower bound: {lower:.4g}, upper bound: {upper:.4g})."
+            )
+
+    if not change_log:
+        change_log.append("No issues found — dataset is already clean.")
+
+    cleaned_missing = int(df.isnull().sum().sum())
+
+    original_stats = {
+        "rows": original_rows,
+        "missing_cells": original_missing,
+        "missing_pct": round(original_missing / max(original_rows * len(df.columns), 1) * 100, 2),
+    }
+    cleaned_stats = {
+        "rows": len(df),
+        "missing_cells": cleaned_missing,
+        "missing_pct": round(cleaned_missing / max(len(df) * len(df.columns), 1) * 100, 2),
+    }
+
+    return {
+        "cleaned_df": df,
+        "change_log": change_log,
+        "original_stats": original_stats,
+        "cleaned_stats": cleaned_stats,
+    }
 
 
 def suggest_target_columns(file_path: str) -> List[Dict[str, Any]]:

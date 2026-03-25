@@ -19,8 +19,9 @@
     <nav class="tab-bar">
         <button class="tab-btn active" data-tab="1">Upload</button>
         <button class="tab-btn locked" data-tab="2">🔒 Overview</button>
-        <button class="tab-btn locked" data-tab="3">🔒 Model & Charts</button>
+        <button class="tab-btn locked" data-tab="3">🔒 Model &amp; Charts</button>
         <button class="tab-btn locked" data-tab="4">🔒 Bias Analysis</button>
+        <button class="tab-btn locked" data-tab="5">🔒 AI Assistant</button>
     </nav>
 
     <!-- MAIN CONTENT -->
@@ -92,6 +93,25 @@
                 <h3 class="subsection-title">Recommendations</h3>
                 <div id="recommendations" class="recommendations-list"><p class="placeholder">Recommendations will appear here</p></div>
             </div>
+
+            <!-- IMPROVE DATASET PANEL (visible after analysis) -->
+            <div id="improve-dataset-panel" class="improve-dataset-panel hidden">
+                <div class="improve-header">
+                    <div>
+                        <h3 class="improve-title">✨ Improve Dataset</h3>
+                        <p class="improve-subtitle">Automatically fix detected issues: remove duplicates, impute missing values, cap outliers.</p>
+                    </div>
+                    <button id="improve-btn" class="improve-btn">Improve Dataset</button>
+                </div>
+                <div id="improve-results" class="improve-results hidden">
+                    <div id="improve-changelog" class="improve-changelog"></div>
+                    <div id="improve-comparison" class="improve-comparison"></div>
+                    <div class="improve-actions">
+                        <a id="download-btn" class="download-btn" href="#" download>⬇ Download Cleaned CSV</a>
+                        <button id="reanalyze-btn" class="reanalyze-btn">🔄 Re-analyze Cleaned Dataset</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- TAB 3: MODEL & CHARTS -->
@@ -132,6 +152,28 @@
             <div id="bias-section" class="bias-section hidden">
                 <h3 class="subsection-title">Bias Analysis</h3>
                 <div id="bias-table" class="bias-table"><p class="placeholder">Bias analysis table will appear here</p></div>
+            </div>
+        </div>
+
+        <!-- TAB 5: AI ASSISTANT -->
+        <div class="tab-content" id="tab-5" style="display:none">
+            <div class="chat-wrapper">
+                <div class="chat-header-bar">
+                    <div class="chat-header-icon">🤖</div>
+                    <div>
+                        <h3 class="chat-title">Dataset Intelligence Assistant</h3>
+                        <p class="chat-subtitle">Ask anything about your dataset — powered by Qwen AI</p>
+                    </div>
+                </div>
+                <div id="chat-messages" class="chat-messages">
+                    <div class="chat-message assistant">
+                        <div class="chat-bubble">Hello! I've analyzed your dataset and I'm ready to help. Ask me anything — why accuracy is low, which columns to drop, how to fix imbalance, or anything else about your data.</div>
+                    </div>
+                </div>
+                <div class="chat-input-row">
+                    <input type="text" id="chat-input" class="chat-input" placeholder="Ask about your dataset..." />
+                    <button id="chat-send" class="chat-send-btn">Send</button>
+                </div>
             </div>
         </div>
 

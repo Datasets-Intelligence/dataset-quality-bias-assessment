@@ -12,6 +12,107 @@ let appState = {
     chartsRendered: false         // Has Tab 3 rendered charts yet
 };
 
+const STATE_KEY = 'DatasetIntelligenceState';
+
+/** Save current state to session storage */
+function saveState() {
+    const state = {
+        appState: {
+            ...appState,
+            isUploading: false,
+            isAnalyzing: false,
+            charts: {} // Do not serialize charts
+        },
+        ui: {
+            targetValue: elements.targetInput ? elements.targetInput.value : '',
+            chatHTML: document.getElementById('chat-messages') ? document.getElementById('chat-messages').innerHTML : '',
+            improveHTML: document.getElementById('improve-results') ? document.getElementById('improve-results').innerHTML : '',
+            improvePanelVisible: document.getElementById('improve-dataset-panel') ? !document.getElementById('improve-dataset-panel').classList.contains('hidden') : false,
+            improveResultsVisible: document.getElementById('improve-results') ? !document.getElementById('improve-results').classList.contains('hidden') : false,
+            improveBtnState: document.getElementById('improve-btn') ? {
+                text: document.getElementById('improve-btn').textContent,
+                disabled: document.getElementById('improve-btn').disabled
+            } : null
+        }
+    };
+    try { sessionStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch (e) {}
+}
+
+/** Load state from session storage */
+function loadState() {
+    try {
+        const saved = sessionStorage.getItem(STATE_KEY);
+        if (!saved) return;
+        const state = JSON.parse(saved);
+        
+        // Restore appState
+        appState = { ...appState, ...state.appState };
+        appState.charts = {}; // Always reset charts
+
+        // Restore basic UI values
+        if (appState.uploadedFile) {
+            elements.fileName.textContent = appState.uploadedFile;
+            elements.targetInput.disabled = false;
+            elements.targetInput.value = state.ui.targetValue || appState.targetColumn || '';
+            updateRunButtonState();
+        }
+
+        // Restore completely if analysis was done
+        if (appState.analysisComplete && appState.analysisResults) {
+            // Re-render all results using the saved data
+            renderStatistics(appState.analysisResults.dataset_statistics);
+            renderQualityIssues(appState.analysisResults.quality_issues);
+            renderModelMetrics(appState.analysisResults.model_metrics);
+            renderBiasAnalysis(appState.analysisResults.bias_findings);
+            renderRecommendations(appState.analysisResults.recommendations);
+            
+            unlockTabs();
+            updateTabBadges(appState.analysisResults);
+            showSummaryStrip(appState.analysisResults);
+            
+            // Restore Improve Dataset Panel
+            if (state.ui.improvePanelVisible) {
+                const panel = document.getElementById('improve-dataset-panel');
+                if (panel) panel.classList.remove('hidden');
+            }
+            if (state.ui.improveResultsVisible && state.ui.improveHTML) {
+                const resultsPanel = document.getElementById('improve-results');
+                if (resultsPanel) {
+                    resultsPanel.innerHTML = state.ui.improveHTML;
+                    resultsPanel.classList.remove('hidden');
+                    // Reattach event listener that gets lost due to innerHTML
+                    const reanalyzeBtn = document.getElementById('reanalyze-btn');
+                    if (reanalyzeBtn) reanalyzeBtn.addEventListener('click', handleReanalyze);
+                }
+            }
+            if (state.ui.improveBtnState) {
+                const btn = document.getElementById('improve-btn');
+                if (btn) {
+                    btn.textContent = state.ui.improveBtnState.text;
+                    btn.disabled = state.ui.improveBtnState.disabled;
+                }
+            }
+
+            // Restore Chat
+            if (state.ui.chatHTML) {
+                const chatContainer = document.getElementById('chat-messages');
+                if (chatContainer) {
+                    chatContainer.innerHTML = state.ui.chatHTML;
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+                initChat();
+            }
+
+            // Jump to the saved tab (this will render charts if going to tab 3)
+            switchTab(appState.activeTab || 2);
+        }
+    } catch (e) {
+        console.error('Error loading session state:', e);
+        sessionStorage.removeItem(STATE_KEY); // Clear corrupted state
+    }
+}
+
+
 
 
 const elements = {
@@ -78,11 +179,24 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Improve Dataset listeners
+    document.getElementById('improve-btn').addEventListener('click', handleImproveDataset);
+    document.getElementById('reanalyze-btn').addEventListener('click', handleReanalyze);
+
+    // Chat listeners
+    document.getElementById('chat-send').addEventListener('click', handleChatSend);
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
+    });
+
     // Initialize Chart.js defaults
     if (window.Chart) {
         Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
         Chart.defaults.color = '#4a5568';
     }
+
+    // Load saved state on startup
+    loadState();
 });
 
 
@@ -160,6 +274,8 @@ async function uploadDataset(file) {
 
         // Auto-fetch target column suggestions
         fetchTargetSuggestions(data.file);
+        
+        saveState(); // Save state after successful upload
         
     } catch (error) {
         setLoadingState('uploading', false);
@@ -288,7 +404,11 @@ function renderResults(results) {
     unlockTabs();
     updateTabBadges(results);
     showSummaryStrip(results);
+    showImproveDatasetPanel();
+    initChat();
     switchTab(2);
+    
+    saveState(); // Save state after analysis
 }
 
 /**
@@ -1220,6 +1340,8 @@ function switchTab(tabNumber) {
         renderVisualizations(visualData, totalRows);
         appState.chartsRendered = true;
     }
+    
+    saveState(); // Save state on tab change
 }
 
 function unlockTabs() {
@@ -1262,6 +1384,14 @@ function lockTabs() {
     document.getElementById('stat-records').textContent = '—';
     document.getElementById('stat-features').textContent = '—';
     document.getElementById('stat-completeness').textContent = '—';
+
+    // Hide improve panel and reset chat
+    const improvePanel = document.getElementById('improve-dataset-panel');
+    if (improvePanel) improvePanel.classList.add('hidden');
+    const improveResults = document.getElementById('improve-results');
+    if (improveResults) improveResults.classList.add('hidden');
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) chatMessages.innerHTML = '<div class="chat-message assistant"><div class="chat-bubble">Hello! I\'ve analyzed your dataset and I\'m ready to help. Ask me anything — why accuracy is low, which columns to drop, how to fix imbalance, or anything else about your data.</div></div>';
 }
 
 function updateTabBadges(results) {
@@ -1337,3 +1467,267 @@ function clearSummaryStrip() {
         elements.summaryStrip.classList.add('hidden');
     }
 }
+
+
+// ============================================
+// IMPROVE DATASET — FEATURE B
+// ============================================
+
+/** Show the improve-dataset panel after analysis completes */
+function showImproveDatasetPanel() {
+    const panel = document.getElementById('improve-dataset-panel');
+    if (panel) {
+        panel.classList.remove('hidden');
+        // Reset to initial state (hide previous results)
+        document.getElementById('improve-results').classList.add('hidden');
+        document.getElementById('improve-btn').disabled = false;
+        document.getElementById('improve-btn').textContent = 'Improve Dataset';
+    }
+}
+
+/** Called when user clicks "Improve Dataset" */
+async function handleImproveDataset() {
+    if (!appState.uploadedFile) {
+        showError('No dataset file reference found. Please re-upload and re-analyze.');
+        return;
+    }
+
+    const btn = document.getElementById('improve-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Improving...';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/improve_dataset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: appState.uploadedFile })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Improvement failed');
+        }
+
+        // Store cleaned filename for re-analyze
+        appState.cleanedFile = data.cleaned_file;
+
+        // Render change log
+        renderChangeLog(data.change_log);
+
+        // Render before/after comparison
+        renderComparisonStats(data.original_stats, data.cleaned_stats);
+
+        // Set download link
+        const downloadBtn = document.getElementById('download-btn');
+        downloadBtn.href = `${API_BASE_URL}/download/${data.cleaned_file}`;
+        downloadBtn.setAttribute('download', data.cleaned_file);
+
+        // Show results
+        document.getElementById('improve-results').classList.remove('hidden');
+        btn.textContent = '✓ Improved';
+
+        saveState(); // Save state after improving
+
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Improve Dataset';
+        showError(`Dataset improvement failed: ${err.message}`);
+    }
+}
+
+/** Render the change log list */
+function renderChangeLog(changeLog) {
+    const container = document.getElementById('improve-changelog');
+    if (!changeLog || changeLog.length === 0) {
+        container.innerHTML = '<p style="color:#6b7280;font-style:italic;">No changes were applied.</p>';
+        return;
+    }
+
+    const items = changeLog.map(entry => `
+        <div class="changelog-item">
+            <span class="changelog-icon">✓</span>
+            <span>${escapeHtml(entry)}</span>
+        </div>
+    `).join('');
+
+    container.innerHTML = `<h4>Changes Applied</h4>${items}`;
+}
+
+/** Render before/after comparison stats grid */
+function renderComparisonStats(original, cleaned) {
+    const container = document.getElementById('improve-comparison');
+    if (!original || !cleaned) { container.innerHTML = ''; return; }
+
+    const rowDiff = original.rows - cleaned.rows;
+    const missDiff = original.missing_cells - cleaned.missing_cells;
+
+    container.innerHTML = `
+        <div class="comparison-card original">
+            <h5>Before</h5>
+            <div class="comparison-stat"><span>Rows</span><span>${original.rows.toLocaleString()}</span></div>
+            <div class="comparison-stat"><span>Missing Cells</span><span>${original.missing_cells.toLocaleString()}</span></div>
+            <div class="comparison-stat"><span>Missing %</span><span>${original.missing_pct}%</span></div>
+        </div>
+        <div class="comparison-card cleaned">
+            <h5>After Cleaning</h5>
+            <div class="comparison-stat"><span>Rows</span><span>${cleaned.rows.toLocaleString()} ${rowDiff > 0 ? `<span style="color:#16a34a;font-size:0.8rem">(-${rowDiff.toLocaleString()})</span>` : ''}</span></div>
+            <div class="comparison-stat"><span>Missing Cells</span><span>${cleaned.missing_cells.toLocaleString()} ${missDiff > 0 ? `<span style="color:#16a34a;font-size:0.8rem">(-${missDiff.toLocaleString()})</span>` : ''}</span></div>
+            <div class="comparison-stat"><span>Missing %</span><span>${cleaned.missing_pct}%</span></div>
+        </div>
+    `;
+}
+
+/** Re-analyze the cleaned dataset — fetch it from backend and re-upload */
+async function handleReanalyze() {
+    if (!appState.cleanedFile) {
+        showError('Cleaned file not available. Please run "Improve Dataset" first.');
+        return;
+    }
+
+    const btn = document.getElementById('reanalyze-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Loading cleaned file...';
+
+    try {
+        // Fetch the cleaned CSV blob from the backend
+        const resp = await fetch(`${API_BASE_URL}/download/${appState.cleanedFile}`);
+        if (!resp.ok) throw new Error('Could not retrieve cleaned file from server');
+
+        const blob = await resp.blob();
+        const file = new File([blob], appState.cleanedFile, { type: 'text/csv' });
+
+        // Display cleaned file name
+        elements.fileName.textContent = appState.cleanedFile;
+
+        // Re-use the same upload pipeline — this will upload and trigger suggestions
+        await uploadDataset(file);
+
+        btn.textContent = '🔄 Re-analyze Cleaned Dataset';
+        btn.disabled = false;
+
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '🔄 Re-analyze Cleaned Dataset';
+        showError(`Re-analyze failed: ${err.message}`);
+    }
+}
+
+
+// ============================================
+// AI ASSISTANT CHAT — FEATURE A
+// ============================================
+
+/** Called after analysis completes — nothing to init yet, just store for future messages */
+function initChat() {
+    // Reset chat input
+    const chatInput = document.getElementById('chat-input');
+    const chatSend = document.getElementById('chat-send');
+    if (chatInput) { chatInput.value = ''; chatInput.disabled = false; }
+    if (chatSend) chatSend.disabled = false;
+}
+
+/** Called when user clicks Send or presses Enter in chat */
+async function handleChatSend() {
+    const chatInput = document.getElementById('chat-input');
+    const chatSend = document.getElementById('chat-send');
+    const message = chatInput.value.trim();
+
+    if (!message) return;
+    if (!appState.analysisResults) {
+        appendChatMessage('assistant', '⚠️ Please run an analysis first before asking questions.');
+        return;
+    }
+
+    // Append user bubble
+    appendChatMessage('user', message);
+    chatInput.value = '';
+    chatInput.disabled = true;
+    chatSend.disabled = true;
+
+    // Show thinking indicator
+    const thinkingId = appendThinkingIndicator();
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                analysis_context: appState.analysisResults
+            })
+        });
+
+        const data = await response.json();
+        removeThinkingIndicator(thinkingId);
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Chat request failed');
+        }
+
+        appendChatMessage('assistant', data.reply);
+        saveState(); // Save chat state
+
+    } catch (err) {
+        removeThinkingIndicator(thinkingId);
+        appendChatMessage('assistant', `⚠️ Error: ${err.message}. Please try again.`);
+    } finally {
+        chatInput.disabled = false;
+        chatSend.disabled = false;
+        chatInput.focus();
+    }
+}
+
+/**
+ * Append a chat message bubble to the messages container.
+ * For assistant messages, basic markdown is rendered (bold, bullets).
+ */
+function appendChatMessage(role, text) {
+    const container = document.getElementById('chat-messages');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `chat-message ${role}`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+
+    if (role === 'assistant') {
+        // Simple markdown: **bold**, bullet lines starting with -/* or numbered
+        let html = escapeHtml(text)
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n\n/g, '</p><p>')
+            .replace(/\n([*\-•]) /g, '\n<li>')
+            .replace(/\n(\d+\.) /g, '\n<li>');
+
+        // Wrap in paragraph
+        html = `<p>${html}</p>`;
+        // Clean up empty paragraphs
+        html = html.replace(/<p><\/p>/g, '');
+
+        bubble.innerHTML = html;
+    } else {
+        bubble.textContent = text;
+    }
+
+    msgDiv.appendChild(bubble);
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+}
+
+/** Show animated "thinking" dots and return a unique ID */
+function appendThinkingIndicator() {
+    const container = document.getElementById('chat-messages');
+    const id = 'thinking-' + Date.now();
+    const div = document.createElement('div');
+    div.id = id;
+    div.className = 'chat-thinking';
+    div.innerHTML = `AI is thinking <span class="thinking-dots"><span></span><span></span><span></span></span>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return id;
+}
+
+/** Remove thinking indicator by ID */
+function removeThinkingIndicator(id) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+}

@@ -1,7 +1,47 @@
+# Python
 __pycache__/
 *.pyc
-.env
-uploads/
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
 venv/
-node_modules/
+env/
+.venv/
+
+# Environment variables / secrets
+.env
+*.env
+
+# Uploads (runtime generated)
+uploads/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Node
+node_modules/
+
+# Byte-compiled / cached
+*.py[cod]
+__pycache__/
+
+# Distribution / packaging
+*.egg
+*.whl
+
+# Logs
+*.log

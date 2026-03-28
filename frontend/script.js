@@ -25,6 +25,7 @@ function saveState() {
         },
         ui: {
             targetValue: elements.targetInput ? elements.targetInput.value : '',
+            displayFilename: elements.fileName ? elements.fileName.textContent : '',
             chatHTML: document.getElementById('chat-messages') ? document.getElementById('chat-messages').innerHTML : '',
             improveHTML: document.getElementById('improve-results') ? document.getElementById('improve-results').innerHTML : '',
             improvePanelVisible: document.getElementById('improve-dataset-panel') ? !document.getElementById('improve-dataset-panel').classList.contains('hidden') : false,
@@ -51,7 +52,8 @@ function loadState() {
 
         // Restore basic UI values
         if (appState.uploadedFile) {
-            elements.fileName.textContent = appState.uploadedFile;
+            // Prefer the original display name (e.g. mydata.json) saved from last upload
+            elements.fileName.textContent = state.ui.displayFilename || appState.uploadedFile;
             elements.targetInput.disabled = false;
             elements.targetInput.value = state.ui.targetValue || appState.targetColumn || '';
             updateRunButtonState();
@@ -220,8 +222,11 @@ function handleFileChange() {
     }
     
     // Validate file type
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-        showError('Please select a CSV file. Other file types are not supported.');
+    const validExts = ['.csv', '.xlsx', '.xls', '.json'];
+    const lowerName = file.name.toLowerCase();
+    
+    if (!validExts.some(ext => lowerName.endsWith(ext))) {
+        showError('Please select a supported file format: .csv, .xlsx, .xls, or .json.');
         elements.fileInput.value = '';
         elements.fileName.textContent = 'No file selected';
         return;
@@ -242,6 +247,10 @@ async function uploadDataset(file) {
     hideError();
     lockTabs();
     clearSummaryStrip();
+    
+    // UI Feedback: tell user if it's converting
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
+    elements.uploadStatus.textContent = isCsv ? 'Uploading dataset...' : 'Uploading and converting format, please wait...';
     setLoadingState('uploading', true);
     
     const formData = new FormData();
@@ -261,18 +270,22 @@ async function uploadDataset(file) {
             throw new Error(data.error || 'Upload failed');
         }
         
-        // Store file reference
+        // Store file reference (always a .csv — standardized by backend)
         appState.uploadedFile = data.file;
+        
+        // Display original filename or the CSV name for the user
+        const displayName = data.original_filename || data.file;
+        elements.fileName.textContent = displayName;
         
         // Update UI
         setLoadingState('uploading', false);
-        showUploadSuccess(data.file);
+        showUploadSuccess(displayName, data.original_filename ? data.file : null);
         
         // Enable target input and analysis button
         elements.targetInput.disabled = false;
         updateRunButtonState();
 
-        // Auto-fetch target column suggestions
+        // Auto-fetch target column suggestions (works for CSV/JSON/Excel — file is already CSV on server)
         fetchTargetSuggestions(data.file);
         
         saveState(); // Save state after successful upload
@@ -286,10 +299,18 @@ async function uploadDataset(file) {
 
 /**
  * Show upload success message
+ * @param {string} displayName - Human-readable filename shown to user
+ * @param {string|null} csvName - If conversion happened, the internal CSV reference (not shown, just signals conversion)
  */
-function showUploadSuccess(filename) {
+function showUploadSuccess(displayName, csvName) {
     elements.uploadStatus.className = 'upload-status success';
-    elements.uploadStatus.textContent = `✓ File uploaded successfully: ${filename}`;
+    if (csvName) {
+        // File was converted (Excel or JSON → CSV)
+        const ext = displayName.split('.').pop().toUpperCase();
+        elements.uploadStatus.textContent = `✓ ${ext} file converted & uploaded: ${displayName}`;
+    } else {
+        elements.uploadStatus.textContent = `✓ File uploaded successfully: ${displayName}`;
+    }
 }
 
 /**

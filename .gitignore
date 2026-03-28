@@ -1,47 +1,100 @@
+# ===========================================
 # Python
+# ===========================================
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+*.egg
 *.egg-info/
 dist/
 build/
-*.egg
+*.whl
+*.spec
 
+# ===========================================
 # Virtual environments
+# ===========================================
 venv/
 env/
 .venv/
+.env/
+ENV/
 
+# ===========================================
 # Environment variables / secrets
+# ===========================================
 .env
 *.env
+.env.local
+.env.*.local
 
-# Uploads (runtime generated)
+# ===========================================
+# Uploads (runtime generated — never commit user data)
+# ===========================================
 uploads/
+*.csv
+*.xlsx
+*.xls
+*.json
 
+# But DO track example/demo datasets if present in a 'examples/' folder:
+!examples/*.csv
+!examples/*.json
+
+# ===========================================
 # IDE / Editor
+# ===========================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.DS_Store
+.obsidian/
 
+# ===========================================
 # OS files
+# ===========================================
 .DS_Store
 Thumbs.db
 desktop.ini
+ehthumbs.db
 
-# Node
+# ===========================================
+# Node / JS
+# ===========================================
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
 
-# Byte-compiled / cached
-*.py[cod]
-__pycache__/
-
-# Distribution / packaging
-*.egg
-*.whl
-
+# ===========================================
 # Logs
+# ===========================================
 *.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ===========================================
+# Testing / Coverage
+# ===========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ===========================================
+# Jupyter / IPython
+# ===========================================
+.ipynb_checkpoints/
+*.ipynb
+
+# ===========================================
+# Misc
+# ===========================================
+*.bak
+*.tmp
+*.orig

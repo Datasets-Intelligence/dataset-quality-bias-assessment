@@ -62,10 +62,21 @@ def upload():
     try:
         if "file" not in request.files:
             raise BadRequest("Missing file part in request")
+        
         file = request.files["file"]
-        saved_path = save_upload(file, UPLOAD_DIR)
-        filename = os.path.basename(saved_path)
-        return jsonify({"file": filename, "message": "Upload successful"}), 201
+        original_filename = file.filename or "unknown"
+        from backend.utils import standardize_to_csv
+        
+        # This converts Excel/JSON to CSV on the fly
+        # All formats land as .csv so all downstream logic (suggest, analyze) works uniformly
+        saved_path = standardize_to_csv(file, UPLOAD_DIR)
+        csv_filename = os.path.basename(saved_path)
+        
+        return jsonify({
+            "file": csv_filename,              # internal CSV reference used for /suggest_target and /analyze
+            "original_filename": original_filename,  # original name for display only
+            "message": "Upload and standardization successful"
+        }), 201
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
